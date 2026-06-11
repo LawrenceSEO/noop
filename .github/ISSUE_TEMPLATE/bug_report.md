@@ -10,6 +10,15 @@ Please leave out anything that identifies you — a strap serial, an account
 email, or a raw export — none of it is needed to reproduce a bug.
 -->
 
+> **⚠️ Please attach a strap log.** NOOP runs entirely on your device, so unless a bug is obviously
+> reproducible on our side, **we usually can't investigate without a log** — a great many "no data /
+> not working" reports turn out to be a setup or usage detail rather than a fault in NOOP, and the log
+> is the only way to tell which. Issues with no log (and no obvious repro) may be closed asking for one.
+>
+> **How to get a strap log:** turn on **Settings → Strap → Debug logging**, reproduce the problem,
+> then **Settings → Strap → Share strap log** (macOS: **Settings → Support → Share strap log**).
+> Redact anything you'd rather not share — partial logs are still useful.
+
 ## What happens
 
 A clear description of the bug.

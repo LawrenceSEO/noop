@@ -17,6 +17,16 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.87 — Deep sleep that happens later in the night no longer reads 0 minutes
+
+- **Fixed (Mac and Android):** follow-on to the deep-sleep fix. NOOP assumes deep sleep is
+  front-loaded (it usually is) and re-imposes that — but it was zeroing out **all** deep detected
+  after the first third of the night, so nights where the deepest stretch lands later showed 0 m of
+  deep despite a clear signature. It now only applies that rule when there's deep early in the night
+  to anchor it. (#127)
+
+---
+
 ## 1.86 — Deep sleep no longer reads 0 minutes, and a smarter AI Coach
 
 - **Fixed (Mac and Android):** on-device sleep nights no longer show **0 minutes of deep sleep**. Deep

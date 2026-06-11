@@ -958,10 +958,15 @@ public enum SleepStager {
                                    onsetIdx: Int, finalWakeIdx: Int) -> [String] {
         var out = labels
         let noREMEpochs = Int((noREMAfterOnsetMin * 60.0 / epochS).rounded())
+        // "Deep is front-loaded" re-imposes scattered late "deep" back to light — BUT only when there's
+        // deep in the first third to anchor that prior. If the whole detected deep block lands later
+        // (individual variation, or HR/HRV-only staging without respiration placing the deepest, lowest-HR
+        // window later), zeroing it out gives a wrong "0 m deep"; keeping the best estimate is better. (#127)
+        let hasEarlyDeep = zip(labels, features).contains { $0.0 == "deep" && $0.1.clock <= deepFirstFraction }
         for (i, f) in features.enumerated() {
             if i < onsetIdx || i > finalWakeIdx { continue }
             if out[i] == "rem" && (i - onsetIdx) < noREMEpochs { out[i] = "light" }
-            if out[i] == "deep" && f.clock > deepFirstFraction { out[i] = "light" }
+            if out[i] == "deep" && f.clock > deepFirstFraction && hasEarlyDeep { out[i] = "light" }
         }
         return out
     }

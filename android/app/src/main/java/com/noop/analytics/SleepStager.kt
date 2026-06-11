@@ -1094,10 +1094,15 @@ object SleepStager {
     ): List<String> {
         val out = labels.toMutableList()
         val noREMEpochs = (noREMAfterOnsetMin * 60.0 / epochS).roundToInt()
+        // "Deep is front-loaded" re-imposes scattered late "deep" back to light — BUT only when there's
+        // deep in the first third to anchor that prior. If the whole detected deep block lands later
+        // (individual variation, or HR/HRV-only staging without respiration placing the deepest, lowest-HR
+        // window later), zeroing it out gives a wrong "0 m deep"; keeping the best estimate is better. (#127)
+        val hasEarlyDeep = labels.indices.any { labels[it] == "deep" && features[it].clock <= deepFirstFraction }
         for ((i, f) in features.withIndex()) {
             if (i < onsetIdx || i > finalWakeIdx) continue
             if (out[i] == "rem" && (i - onsetIdx) < noREMEpochs) out[i] = "light"
-            if (out[i] == "deep" && f.clock > deepFirstFraction) out[i] = "light"
+            if (out[i] == "deep" && f.clock > deepFirstFraction && hasEarlyDeep) out[i] = "light"
         }
         return out
     }

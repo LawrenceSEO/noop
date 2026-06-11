@@ -308,4 +308,26 @@ final class SleepStagerTests: XCTestCase {
             hrLo: 55, hrHi: 90, rmssdHi: 50, hrvarHi: 100, rrvHi: 1, rrvLo: 0.5)
         XCTAssertNotEqual(withLowRmssd, "deep", "a measurable-but-low RMSSD epoch must still clear the high-tone bar")
     }
+
+    // #127 (follow-up): the "deep is front-loaded" re-imposition zeroed deep entirely on nights whose
+    // whole deep block lands after the first third (clock > 1/3). It must only re-impose late "deep" to
+    // light when there's deep in the first third to anchor it; otherwise keep the best estimate.
+    private func clockEpoch(_ clock: Double) -> SleepStager.EpochFeatures {
+        SleepStager.EpochFeatures(index: 0, midTs: 0, count: 0, moveFrac: 0, ckSleep: true,
+                                  hr: 50, hrVar: 0, rmssd: 60, sdnn: 0, respRate: 14, rrv: .nan, clock: clock)
+    }
+
+    func testDeepReimpositionKeepsLateDeepWhenNoEarlyDeep() {
+        let labels = ["deep", "deep", "deep", "deep"]
+        // Early deep present (clock 0.2): the later deep (> 1/3) is re-imposed to light.
+        let withEarly = SleepStager.reimposePhysiology(labels,
+            features: [clockEpoch(0.2), clockEpoch(0.5), clockEpoch(0.7), clockEpoch(0.9)],
+            onsetIdx: 0, finalWakeIdx: 3)
+        XCTAssertEqual(withEarly, ["deep", "light", "light", "light"])
+        // No early deep (all clocks > 1/3): the late deep is KEPT rather than zeroed to 0 m. (#127)
+        let allLate = SleepStager.reimposePhysiology(labels,
+            features: [clockEpoch(0.5), clockEpoch(0.6), clockEpoch(0.7), clockEpoch(0.9)],
+            onsetIdx: 0, finalWakeIdx: 3)
+        XCTAssertEqual(allLate, ["deep", "deep", "deep", "deep"])
+    }
 }
