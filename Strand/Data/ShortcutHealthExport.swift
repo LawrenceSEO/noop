@@ -81,7 +81,16 @@ enum ShortcutHealthExport {
                        defaults: UserDefaults, directory: URL, timeZone: TimeZone) async -> Outcome {
         let nowTs = Int(now.timeIntervalSince1970)
         let span = coverageSpan(nowTs: nowTs, watermark: defaults.integer(forKey: watermarkKey))
-        guard span.from < span.end else { return .nothingNew }
+        guard span.from < span.end else {
+            // Nothing new — TRUNCATE the file rather than leaving the previous rows behind. The
+            // Shortcut has no dedup and its automation fires on every app close, while most closes
+            // complete no new 15-min window: a stale file would be re-imported into Apple Health on
+            // every run (#167). An empty file imports nothing. (Trade-off, by design: rows the
+            // Shortcut never read before the next truncate are skipped — strictly-differential
+            // beats duplicating; resetWatermark() re-emits the 7-day window as the escape hatch.)
+            try? Data().write(to: directory.appendingPathComponent(fileName), options: .atomic)
+            return .nothingNew
+        }
         do {
             let hr = try await source.hrBuckets(deviceId: deviceId, from: span.from,
                                                 to: span.end - 1, bucketSeconds: windowSeconds)

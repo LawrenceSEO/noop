@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "2.2.0"
+    const val CURRENT_VERSION = "2.2.1"
 
     data class Release(
         val version: String,
@@ -36,6 +36,15 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "2.2.1",
+            title = "Shortcuts-export duplicates fixed; nutrition & mood reach Android charts",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (iOS): the \"Export for Shortcuts\" file is now truncated when there's nothing new, so a Shortcut automation firing on every app close can't re-import the previous rows into Apple Health — exports are strictly differential. (#167, thanks @alexsas00)",
+                "Fixed (Android): imported nutrition (calories-in, protein, carbs, fat) and your Mood series now appear in Explore and Compare with proper names and units — they were stored but invisible to the metric pickers.",
+            ),
+        ),
         Release(
             version = "2.2.0",
             title = "Mind — a daily mood check-in — and nutrition import",

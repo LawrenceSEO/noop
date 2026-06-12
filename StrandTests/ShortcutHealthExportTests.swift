@@ -231,7 +231,7 @@ final class ShortcutHealthExportTests: XCTestCase {
         XCTAssertEqual(defaults.integer(forKey: ShortcutHealthExport.watermarkKey), 0)
     }
 
-    func testExportNothingNewWhenWatermarkCoversNow() async {
+    func testExportNothingNewWhenWatermarkCoversNow() async throws {
         defaults.set(9_900, forKey: ShortcutHealthExport.watermarkKey)
         let outcome = await ShortcutHealthExport.export(
             source: FakeReads(hr: [HRBucket(ts: 0, bpm: 62)]), deviceId: "dev",
@@ -239,7 +239,25 @@ final class ShortcutHealthExportTests: XCTestCase {
             defaults: defaults, directory: dir, timeZone: utc)
         XCTAssertEqual(outcome, .nothingNew)
         XCTAssertEqual(defaults.integer(forKey: ShortcutHealthExport.watermarkKey), 9_900)
-        XCTAssertThrowsError(try fileText(), "nothing-new must not touch the file")
+        // Nothing-new TRUNCATES (not skips): a stale file would be re-imported by the Shortcut's
+        // every-app-close automation, duplicating rows into Apple Health (#167).
+        XCTAssertEqual(try fileText(), "")
+    }
+
+    // The #167 duplication repro: rows exported → app closes again with no new complete window →
+    // the file must be EMPTY, or the Shortcut re-imports the previous rows on every automation run.
+    func testNothingNewTruncatesStaleFileSoShortcutCannotReimport() async throws {
+        _ = await ShortcutHealthExport.export(
+            source: FakeReads(hr: [HRBucket(ts: 0, bpm: 62)]), deviceId: "dev",
+            now: Date(timeIntervalSince1970: 10_000),
+            defaults: defaults, directory: dir, timeZone: utc)
+        XCTAssertEqual(try fileText(), "62,,,1970-01-01 00:00")
+        let second = await ShortcutHealthExport.export(
+            source: FakeReads(hr: [HRBucket(ts: 0, bpm: 62)]), deviceId: "dev",
+            now: Date(timeIntervalSince1970: 10_060),   // +60s — same 15-min window, nothing new
+            defaults: defaults, directory: dir, timeZone: utc)
+        XCTAssertEqual(second, .nothingNew)
+        XCTAssertEqual(try fileText(), "", "stale rows must not survive a nothing-new export (#167)")
     }
 
     // Full-file REPLACE: the second export's file contains only the new span — never an append

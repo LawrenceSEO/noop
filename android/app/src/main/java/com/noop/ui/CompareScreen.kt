@@ -48,6 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.data.DailyMetric
+import com.noop.data.MoodStore
+import com.noop.ingest.NutritionCsvImporter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -122,7 +124,7 @@ data class CompareMetric(
  * [DailyMetric] so a my-whoop metric can be derived from the daily cache as a fallback.
  */
 private object CompareCatalog {
-    val categories = listOf("Heart", "Recovery", "Sleep", "Strain", "Health")
+    val categories = listOf("Heart", "Recovery", "Sleep", "Strain", "Health", "Nutrition", "Mind")
 
     val all: List<CompareMetric> = listOf(
         // Heart
@@ -153,6 +155,14 @@ private object CompareCatalog {
         CompareMetric("body_fat", "Body Fat", "Health", "%", "apple-health", 1),
         CompareMetric("lean_mass", "Lean Body Mass", "Health", "kg", "apple-health", 1),
         CompareMetric("bmi", "BMI", "Health", "", "apple-health", 1),
+        // Nutrition (imported from a food-tracker CSV — calories-in next to calories-out).
+        // Mirrors the macOS MetricCatalog entries exactly (same keys + sources, v2.2.0 parity).
+        CompareMetric("calories_in", "Calories In", "Nutrition", "kcal", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("protein_g", "Protein", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("carbs_g", "Carbs", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        CompareMetric("fat_g", "Fat", "Nutrition", "g", NutritionCsvImporter.SOURCE_ID, 0),
+        // Mind (daily mood check-in, 1–5; non-clinical self-tracking).
+        CompareMetric("mood", "Mood", "Mind", "/5", MoodStore.MOOD_DEVICE_ID, 0),
     )
 
     fun inCategory(c: String): List<CompareMetric> = all.filter { it.category == c }

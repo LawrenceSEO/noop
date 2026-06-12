@@ -17,6 +17,17 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 2.2.1 — Shortcuts-export duplicates fixed; nutrition & mood reach Android charts
+
+- **Fixed (iOS):** the **"Export for Shortcuts"** file is now **truncated when there's nothing new**, so
+  a Shortcut automation firing on every app close can't re-import the previous rows into Apple Health —
+  exports are strictly differential. (#167, thanks @alexsas00)
+- **Fixed (Android):** imported **nutrition** (calories-in, protein, carbs, fat) and your **Mood** series
+  now appear in **Explore and Compare** with proper names and units — they were stored but invisible to
+  the metric pickers.
+
+---
+
 ## 2.2.0 — Mind: a daily mood check-in, and nutrition import
 
 - **New (Mac, iOS and Android):** **Mind** — a one-tap daily **mood check-in** (five faces) on the
