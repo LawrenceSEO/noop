@@ -12,7 +12,7 @@ import com.noop.analytics.Calories
 import com.noop.analytics.StrainScorer
 import com.noop.analytics.UserProfile
 import com.noop.analytics.WorkoutSport
-import com.noop.location.LocationTracker
+import com.noop.location.GpsSession
 import kotlinx.coroutines.Job
 import com.noop.ble.LiveState
 import com.noop.ble.WhoopConnectionService
@@ -296,28 +296,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _lastWorkout = MutableStateFlow<WorkoutRow?>(null)
     val lastWorkout: StateFlow<WorkoutRow?> = _lastWorkout.asStateFlow()
 
-    private val locationTracker by lazy { LocationTracker(appContext) }
+    /** Mirrors the process-level [GpsSession] route into [_activeWorkout] for live display. The route
+     *  itself is collected by [WhoopConnectionService], not here, so it survives the screen turning off
+     *  (#215) — this observer just republishes it to the UI while the ViewModel is alive. */
     private var gpsJob: Job? = null
 
     /** Begin a workout for [sport]; start GPS route tracking when [gpsEnabled]. Single buzz confirms. */
     fun startWorkout(sport: Sport = WorkoutSport.default, gpsEnabled: Boolean = false) {
         if (_activeWorkout.value != null) return
         _lastWorkout.value = null
-        _activeWorkout.value = ActiveWorkout(startMs = System.currentTimeMillis(), sport = sport, gpsEnabled = gpsEnabled)
+        val startMs = System.currentTimeMillis()
+        _activeWorkout.value = ActiveWorkout(startMs = startMs, sport = sport, gpsEnabled = gpsEnabled)
         buzz(1)
         if (gpsEnabled) {
-            gpsJob = viewModelScope.launch {
-                locationTracker.stream().collect { pt -> appendTrackPoint(pt) }
+            // Hand the route to the process-level session and make sure the foreground service is up to
+            // collect it — even if the user hasn't opted into background connection, the route must keep
+            // tracking with the screen off (#215). Then mirror the shared route back into the UI state.
+            GpsSession.start(startMs, sport.name)
+            WhoopConnectionService.start(appContext)
+            observeGpsSession()
+        }
+    }
+
+    /** Mirror the process-level [GpsSession] route into [_activeWorkout] while the ViewModel is alive.
+     *  Re-attachable: also used by [rehydrateActiveGpsWorkout] after a VM/process restart. */
+    private fun observeGpsSession() {
+        gpsJob?.cancel()
+        gpsJob = viewModelScope.launch {
+            GpsSession.state.collect { s ->
+                val w = _activeWorkout.value ?: return@collect
+                _activeWorkout.value = w.copy(track = s.track, distanceM = s.distanceM, paceSecPerKm = s.paceSecPerKm)
             }
         }
     }
 
-    private fun appendTrackPoint(pt: RouteMath.LatLng) {
-        val w = _activeWorkout.value ?: return
-        val track = w.track + pt
-        val dist = RouteMath.totalMeters(track)
-        val secs = (System.currentTimeMillis() - w.startMs) / 1000.0
-        _activeWorkout.value = w.copy(track = track, distanceM = dist, paceSecPerKm = RouteMath.paceSecPerKm(dist, secs))
+    /**
+     * If a GPS workout is still tracking in the background (process kept alive by the foreground
+     * service) but this ViewModel was recreated, rebuild the active-workout card from [GpsSession] so
+     * reopening the app doesn't hide an in-flight ride. HR samples that elapsed while the UI was gone
+     * aren't recoverable here (they stream live), but the route — the thing #215 was about — is intact.
+     */
+    private fun rehydrateActiveGpsWorkout() {
+        val s = GpsSession.state.value
+        if (!s.active || _activeWorkout.value != null) return
+        val sport = WorkoutSport.all.firstOrNull { it.name == s.sportName } ?: WorkoutSport.default
+        _activeWorkout.value = ActiveWorkout(
+            startMs = s.startMs, sport = sport, gpsEnabled = true,
+            track = s.track, distanceM = s.distanceM, paceSecPerKm = s.paceSecPerKm,
+        )
+        observeGpsSession()
     }
 
     /** Finish the active workout: score the captured HR window + finalize the GPS route, save a
@@ -327,8 +354,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val w = _activeWorkout.value ?: return
         _activeWorkout.value = null
         gpsJob?.cancel(); gpsJob = null
+        // The process-level session is authoritative for the route: it kept accumulating even if this
+        // ViewModel was cleared mid-ride (screen off), so [w.track] may be stale. Stop it and take its
+        // final track. A non-GPS workout has nothing in the session, so fall back to the local track. (#215)
+        val track = if (w.gpsEnabled) GpsSession.stop() else w.track
+        val distanceM = if (w.gpsEnabled) RouteMath.totalMeters(track) else w.distanceM
+        // If we promoted the foreground service ONLY to keep GPS tracking alive (the user hasn't opted
+        // into the background connection), drop it now the route is finished — otherwise a lingering
+        // "Connected" notification would outlive the workout. With background-connection on, leave it
+        // up. Done here (before the discard early-return) so an empty GPS session tears down too. (#215)
+        if (w.gpsEnabled && !NoopPrefs.backgroundConnection(appContext)) {
+            WhoopConnectionService.stop(appContext)
+        }
         val samples = w.samples
-        if (samples.size < 2 && w.track.size < 2) { _lastWorkout.value = null; return }
+        if (samples.size < 2 && track.size < 2) { _lastWorkout.value = null; return }
         val endMs = System.currentTimeMillis()
         val avg = if (samples.isNotEmpty()) samples.sumOf { it.bpm } / samples.size else null
         val peak = if (samples.isNotEmpty()) samples.maxOf { it.bpm } else null
@@ -345,8 +384,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             sport = w.sport.name, source = "manual", durationS = (endMs - w.startMs) / 1000.0,
             energyKcal = energyKcal,
             avgHr = avg, maxHr = peak, strain = strain,
-            distanceM = w.distanceM.takeIf { it > 0 },
-            routePolyline = if (w.track.size >= 2) RouteMath.encode(w.track) else null,
+            distanceM = distanceM.takeIf { it > 0 },
+            routePolyline = if (track.size >= 2) RouteMath.encode(track) else null,
         )
         _lastWorkout.value = row
         buzz(2)
@@ -361,7 +400,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Append the current smoothed bpm to the active workout and recompute its running strain. Called
      *  from ingestHr on every fresh sample; a no-op when no workout is running. */
     private fun captureWorkoutSample(bpm: Int) {
-        val w = _activeWorkout.value ?: return
+        // `_activeWorkout` (declared further down) can still be null HERE: the HR collector in the first
+        // init block can fire ingestHr -> captureWorkoutSample INLINE during construction (a StateFlow
+        // replays its current value to a new collector), before this field's initializer has run — the
+        // JVM field-init footgun. The safe-call tolerates that one-shot race; once constructed it is
+        // never null. (Fixes the NPE in @maddognik's ADB: captureWorkoutSample -> getValue on null.)
+        @Suppress("UNNECESSARY_SAFE_CALL")
+        val w = _activeWorkout?.value ?: return
         val s = w.samples + HrSample(deviceId = deviceId, ts = System.currentTimeMillis() / 1000, bpm = bpm)
         val strain = StrainScorer.strain(s, maxHR = profileStore.hrMax.toDouble(), sex = profileStore.sex) ?: 0.0
         _activeWorkout.value = w.copy(
@@ -380,6 +425,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _workouts = MutableStateFlow<List<WorkoutRow>>(emptyList())
     /** All workouts for the Workouts screen (newest first), dismissed detected bouts removed. */
     val workouts: StateFlow<List<WorkoutRow>> = _workouts.asStateFlow()
+
+    /** Persist a bed/wake-time edit for one sleep session (delete-then-upsert at the new window).
+     *  Swallows failures — the Sleep screen already applied the change optimistically. */
+    suspend fun updateSleepSessionTimes(session: com.noop.data.SleepSession, newStartTs: Long, newEndTs: Long) {
+        runCatching { repository.updateSleepSessionTimes(session, newStartTs, newEndTs) }
+    }
 
     /** Re-read every source + the dismissed markers and republish [workouts]. */
     fun loadWorkouts() {
@@ -517,6 +568,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // background-health permission and is unreliable on Android 14+, and opening the app regularly
         // is enough for a personal health app.
         syncHealthConnectIfStale()
+
+        // If a GPS workout is still tracking in the background (the screen was off and this VM was
+        // recreated on reopen), rebuild its active-workout card from the process-level session. Placed
+        // in THIS init — not the first one above — because it reads _activeWorkout, which is declared
+        // below the first init block and would still be null there (JVM field init order). (#215)
+        rehydrateActiveGpsWorkout()
     }
 
     /** Flip auto-sync. Persists and, on enable, kicks an immediate import; thereafter it catches up on

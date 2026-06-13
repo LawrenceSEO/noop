@@ -2,7 +2,6 @@ package com.noop.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,10 +11,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -287,12 +294,10 @@ fun TrendsExploreScreen(vm: AppViewModel) {
             )
         }
 
-        // METRIC PICKER — a horizontal row of selectable chips (replaces the macOS
-        // grouped catalog list; one tap selects the metric to chart).
-        SectionHeader("Metric", overline = "Pick a signal", trailing = "${metrics.size}")
-        MetricChips(
+        // METRIC PICKER — a dropdown replacing the old horizontal chip row.
+        MetricDropdown(
             metrics = metrics,
-            selectedKey = selected.key,
+            selected = selected,
             onSelect = { selectedKey = it },
         )
 
@@ -346,54 +351,105 @@ fun TrendsExploreScreen(vm: AppViewModel) {
     }
 }
 
-// MARK: - Metric picker chips
+// MARK: - Metric picker dropdown
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MetricChips(
+private fun MetricDropdown(
     metrics: List<MetricSpec>,
-    selectedKey: String,
+    selected: MetricSpec,
     onSelect: (String) -> Unit,
 ) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(metrics) { metric ->
-            MetricChip(
-                metric = metric,
-                selected = metric.key == selectedKey,
-                onClick = { onSelect(metric.key) },
+    var expanded by remember { mutableStateOf(false) }
+    val grouped = remember(metrics) { metrics.groupBy { it.category } }
+    val shape = RoundedCornerShape(Metrics.cornerSm)
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor()
+                .clip(shape)
+                .background(Palette.surfaceInset)
+                .border(Metrics.divider, Palette.accent.copy(alpha = StrandAlpha.selectedBorder), shape)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(selected.accent))
+            Column(modifier = Modifier.weight(1f)) {
+                Overline(selected.category, color = Palette.textTertiary)
+                Text(selected.title, style = NoopType.headline, color = Palette.textPrimary)
+            }
+            Icon(
+                if (expanded) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
+                contentDescription = "Pick metric",
+                tint = if (expanded) Palette.accent else Palette.textSecondary,
             )
         }
-    }
-}
 
-@Composable
-private fun MetricChip(metric: MetricSpec, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(50)
-    val border = if (selected) metric.accent.copy(alpha = 0.55f) else Palette.hairline
-    val bg = if (selected) metric.accent.copy(alpha = 0.14f) else Palette.surfaceInset
-    Row(
-        modifier = Modifier
-            .clip(shape)
-            .background(bg)
-            .border(1.dp, border, shape)
-            .clickableRow(onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
             modifier = Modifier
-                .height(8.dp)
-                .width(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(metric.accent),
-        )
-        Text(
-            metric.title,
-            style = NoopType.captionNumber,
-            color = if (selected) Palette.textPrimary else Palette.textSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+                .background(Palette.surfaceRaised)
+                .border(Metrics.divider, Palette.hairline, shape),
+        ) {
+            grouped.entries.forEachIndexed { groupIdx, (category, items) ->
+                if (groupIdx > 0) {
+                    HorizontalDivider(
+                        color = Palette.hairline,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Palette.surfaceRaised)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Palette.accent))
+                    Overline(category, color = Palette.accent)
+                }
+                items.forEach { metric ->
+                    val isSelected = metric.key == selected.key
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(metric.accent))
+                                Text(
+                                    metric.title,
+                                    style = NoopType.body,
+                                    color = if (isSelected) Palette.accent else Palette.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (isSelected) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = Palette.accent,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                        },
+                        onClick = { onSelect(metric.key); expanded = false },
+                        modifier = if (isSelected) {
+                            Modifier.background(Palette.accent.copy(alpha = StrandAlpha.selectedFill))
+                        } else Modifier,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -456,6 +512,7 @@ private fun HeroChartCard(
                             modifier = Modifier.weight(1f).height(Metrics.chartHeight),
                             color = metric.accent,
                             fill = true,
+                            selectionEnabled = true,
                         )
                     }
                     val days = windowed.map { it.day }
@@ -626,8 +683,3 @@ private fun rangeCaption(
     return if (fellBack) "$n $unit · sparse — widened to ${effectiveRange.windowName}"
     else "$n $unit · ${range.windowName}"
 }
-
-// MARK: - Small interaction helper (clickable row, default ripple)
-
-private fun Modifier.clickableRow(onClick: () -> Unit): Modifier =
-    this.clickable(onClick = onClick)

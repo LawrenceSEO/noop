@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 import com.noop.NoopApplication
 import com.noop.R
 import com.noop.analytics.IllnessWatch
+import com.noop.location.GpsSession
+import com.noop.location.LocationTracker
 import com.noop.notif.IllnessAlertNotifier
 import com.noop.ui.NoopPrefs
 import com.noop.ui.appLaunchIntent
@@ -29,6 +31,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -58,6 +62,18 @@ class WhoopConnectionService : Service() {
     /** The single live-state→notification collector. Re-`start`s land here repeatedly (on every
      *  connect, plus any OS restart), so we cancel the old one before launching a new one. */
     private var notifyJob: Job? = null
+
+    /** Watches [GpsSession] and runs the platform location stream while a GPS workout is active. This
+     *  is what makes route tracking survive the screen turning off (#215): the collection lives on the
+     *  always-on service, not the Activity-scoped ViewModel that Android cancels when it's cleared. */
+    private var gpsGateJob: Job? = null
+
+    /** The actual location collector, alive only while a GPS workout is in flight. Cancelled (which
+     *  removes the LocationManager updates via the stream's awaitClose) the moment the workout ends. */
+    private var gpsJob: Job? = null
+
+    /** Platform-GPS wrapper (no Google Play Services). Lazily built — the service holds a Context. */
+    private val locationTracker by lazy { LocationTracker(this) }
 
     /** Last illness-watch evaluation seen by the collector — clear→raised is the notify edge.
      *  In-memory on purpose: the persisted once-a-day gate (NoopPrefs) handles dedupe across
@@ -142,6 +158,38 @@ class WhoopConnectionService : Service() {
             }
         }
 
+        // Drive GPS route tracking from here so it OUTLIVES the UI (#215). While a GPS workout is
+        // active we collect the platform location stream into the process-level [GpsSession]; the
+        // ViewModel only observes that shared route. Gated on the active flag so the location radio is
+        // off (and the FGS's location type unused) outside a GPS workout. Re-`start`s land here, so we
+        // cancel + relaunch the gate, never stack collectors.
+        gpsGateJob?.cancel()
+        gpsGateJob = scope.launch {
+            GpsSession.state
+                .map { it.active }
+                .distinctUntilChanged()
+                .collect { active ->
+                    gpsJob?.cancel()
+                    gpsJob = null
+                    if (active) {
+                        // Re-post with the location service type added so background location is
+                        // permitted while tracking; on Android 14+ a service that reads location in the
+                        // background must declare the location FGS type. Reverted to connectedDevice-only
+                        // when the workout ends (active=false re-posts the base type).
+                        startForegroundCompat(buildNotification(ble.state.value, null), tracking = true)
+                        gpsJob = launch {
+                            // LocationTracker fails SAFE (no permission / no provider just ends the
+                            // stream); runCatching guards an OEM throw so it can't tear down the FGS.
+                            runCatching {
+                                locationTracker.stream().collect { pt -> GpsSession.append(pt) }
+                            }
+                        }
+                    } else {
+                        startForegroundCompat(buildNotification(ble.state.value, null), tracking = false)
+                    }
+                }
+        }
+
         // START_NOT_STICKY: the FGS's job is to keep this process *alive* (which it does while
         // running, making OS kills unlikely). We deliberately do NOT resurrect after a kill, because
         // a fresh process has no strap/model context to reconnect with — the user reopening the app
@@ -150,11 +198,14 @@ class WhoopConnectionService : Service() {
         return START_NOT_STICKY
     }
 
-    /** Promote to the foreground. Returns false (rather than throwing) if the platform refuses. */
-    private fun startForegroundCompat(notification: Notification): Boolean = runCatching {
+    /** Promote to the foreground. Returns false (rather than throwing) if the platform refuses. When
+     *  [tracking] a GPS workout we add the location FGS type — Android 14+ requires it for a service
+     *  that reads location in the background (the manifest declares `connectedDevice|location`). */
+    private fun startForegroundCompat(notification: Notification, tracking: Boolean = false): Boolean = runCatching {
         val type =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                val locationType = if (tracking) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or locationType
             } else {
                 0
             }

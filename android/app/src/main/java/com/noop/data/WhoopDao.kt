@@ -73,6 +73,11 @@ interface WhoopDao {
     @Upsert
     suspend fun upsertSleepSessions(rows: List<SleepSession>)
 
+    /** Remove one sleep session by its full primary key (deviceId, startTs) — used by the
+     *  bed/wake-time edit, which deletes then re-inserts because startTs is part of the PK. */
+    @Query("DELETE FROM sleepSession WHERE deviceId = :deviceId AND startTs = :startTs")
+    suspend fun deleteSleepSession(deviceId: String, startTs: Long)
+
     @Upsert
     suspend fun upsertMetricSeries(rows: List<MetricSeriesRow>)
 

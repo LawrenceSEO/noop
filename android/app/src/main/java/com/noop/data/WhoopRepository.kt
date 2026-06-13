@@ -160,6 +160,14 @@ class WhoopRepository(private val dao: WhoopDao) {
 
     suspend fun upsertDailyMetrics(days: List<DailyMetric>) = dao.upsertDailyMetrics(days)
     suspend fun upsertSleepSessions(sessions: List<SleepSession>) = dao.upsertSleepSessions(sessions)
+
+    /** Adjust the start/end of an existing sleep session. startTs is part of the primary key, so
+     *  this deletes the old row and re-inserts a copy at the new window — every other field
+     *  (efficiency, restingHr, avgHrv, stagesJSON) is preserved via [SleepSession.copy]. */
+    suspend fun updateSleepSessionTimes(session: SleepSession, newStartTs: Long, newEndTs: Long) {
+        dao.deleteSleepSession(session.deviceId, session.startTs)
+        dao.upsertSleepSessions(listOf(session.copy(startTs = newStartTs, endTs = newEndTs)))
+    }
     suspend fun upsertMetricSeries(rows: List<MetricSeriesRow>) = dao.upsertMetricSeries(rows)
     suspend fun upsertJournal(rows: List<JournalEntry>) = dao.upsertJournal(rows)
     suspend fun upsertWorkouts(rows: List<WorkoutRow>) = dao.upsertWorkouts(rows)
