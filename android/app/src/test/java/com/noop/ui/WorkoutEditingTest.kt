@@ -40,6 +40,7 @@ class WorkoutEditingTest {
         assertEquals(WorkoutSource.DETECTED, WorkoutEditing.classify("my-whoop-noop"))
         assertEquals(WorkoutSource.WHOOP, WorkoutEditing.classify("whoop"))
         assertEquals(WorkoutSource.MANUAL, WorkoutEditing.classify("manual"))
+        assertEquals(WorkoutSource.LIFTING, WorkoutEditing.classify("lifting"))
         assertEquals(WorkoutSource.APPLE, WorkoutEditing.classify("apple-health"))
         assertEquals(WorkoutSource.APPLE, WorkoutEditing.classify("Apple Health"))
     }

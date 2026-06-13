@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -54,10 +56,26 @@ fun StartWorkoutSheet(vm: AppViewModel, onDismiss: () -> Unit) {
     var gpsOn by remember(selected) { mutableStateOf(selected.isDistanceSport) }
     val filtered = WorkoutSport.all.filter { it.name.contains(query, ignoreCase = true) }
     val sportScroll = rememberScrollState()
+    // Live workout mode (#238): once a workout begins, the sheet transitions IN PLACE into the full
+    // in-exercise screen — staying mounted so its state survives — and only tells the parent to close
+    // (onDismiss) when the live workout itself is closed. Hosted HERE so BOTH entry points (Live +
+    // Workouts) that use this sheet get the live workout without each screen wiring it.
+    var showLiveWorkout by remember { mutableStateOf(false) }
     val startWithGps = rememberRequestLocation { granted ->
         vm.startWorkout(selected, gpsEnabled = gpsOn && granted)
-        onDismiss()
+        showLiveWorkout = true
     }
+
+    if (showLiveWorkout) {
+        Dialog(
+            onDismissRequest = { showLiveWorkout = false; onDismiss() },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            LiveWorkoutScreen(vm = vm, onClose = { showLiveWorkout = false; onDismiss() })
+        }
+        return
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Start a workout") },
@@ -104,10 +122,10 @@ fun StartWorkoutSheet(vm: AppViewModel, onDismiss: () -> Unit) {
         confirmButton = {
             Button(onClick = {
                 if (gpsOn) {
-                    startWithGps() // requests location, then starts in the callback (#101)
+                    startWithGps() // requests location, then starts + opens live workout in the callback (#101)
                 } else {
                     vm.startWorkout(selected, gpsEnabled = false)
-                    onDismiss()
+                    showLiveWorkout = true
                 }
             }) {
                 Text("Start ${selected.name}")
@@ -130,6 +148,10 @@ fun WorkoutStartSection(vm: AppViewModel) {
     val live by vm.live.collectAsStateWithLifecycle()
     val activeWorkout by vm.activeWorkout.collectAsStateWithLifecycle()
     var showSportPicker by remember { mutableStateOf(false) }
+    // Live workout mode (#238): the full-screen in-exercise view. StartWorkoutSheet opens it the
+    // moment a workout begins; this re-entry lets the user re-open it from the compact banner after
+    // dismissing. Closing just hides the overlay — the workout keeps recording in the background.
+    var showLiveWorkout by remember { mutableStateOf(false) }
 
     val w = activeWorkout
     if (w != null) {
@@ -147,6 +169,13 @@ fun WorkoutStartSection(vm: AppViewModel) {
                     style = NoopType.title2, color = Palette.textPrimary,
                 )
                 Spacer(Modifier.weight(1f))
+                // Re-open the full-screen live workout view.
+                OutlinedButton(
+                    onClick = { showLiveWorkout = true },
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
+                ) { Text("Open", style = NoopType.captionNumber) }
+                Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = { vm.endWorkout() },
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
@@ -169,6 +198,17 @@ fun WorkoutStartSection(vm: AppViewModel) {
 
     if (showSportPicker) {
         StartWorkoutSheet(vm = vm, onDismiss = { showSportPicker = false })
+    }
+
+    // The full-screen live workout overlay (#238). A plain full-screen Dialog so it floats over
+    // whichever screen launched it. Dismiss just hides it; End (inside) stops the workout.
+    if (showLiveWorkout && activeWorkout != null) {
+        Dialog(
+            onDismissRequest = { showLiveWorkout = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            LiveWorkoutScreen(vm = vm, onClose = { showLiveWorkout = false })
+        }
     }
 }
 

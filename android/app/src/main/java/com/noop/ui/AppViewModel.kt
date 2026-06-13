@@ -4,6 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.noop.NoopApplication
+import com.noop.alarm.SmartAlarmScheduler
+import com.noop.alarm.SmartAlarmStore
+import com.noop.alarm.WindDownScheduler
+import com.noop.alarm.WindDownStore
 import com.noop.analytics.IllnessWatch
 import com.noop.analytics.IntelligenceEngine
 import com.noop.analytics.RouteMath
@@ -24,6 +28,7 @@ import com.noop.data.WhoopRepository
 import com.noop.data.WorkoutRow
 import com.noop.ingest.HealthConnectImporter
 import com.noop.ingest.HealthConnectWriter
+import com.noop.ingest.LiftingImporter
 import com.noop.notif.IllnessAlertNotifier
 import com.noop.protocol.CommandNumber
 import com.noop.widget.WidgetSnapshot
@@ -120,6 +125,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val smartAlarmEnabled: StateFlow<Boolean> = _smartAlarmEnabled.asStateFlow()
     private val _smartAlarmMinutes = MutableStateFlow(NoopPrefs.smartAlarmMinutes(appContext))
     val smartAlarmMinutes: StateFlow<Int> = _smartAlarmMinutes.asStateFlow()
+
+    // PHONE smart alarm (#207) — distinct from the strap-firmware buzz alarm above. The state lives in
+    // its own [SmartAlarmStore]; the GUARANTEED wake is an exact OS alarm via [SmartAlarmScheduler],
+    // independent of Bluetooth, sleep detection, or this process being alive. The overnight watcher
+    // (WhoopConnectionService) may only move it EARLIER within the window.
+    private val phoneAlarmStore = SmartAlarmStore.from(appContext)
+    private val _phoneAlarmEnabled = MutableStateFlow(phoneAlarmStore.enabled)
+    /** Whether the phone smart alarm is armed (a guaranteed OS alarm is scheduled). */
+    val phoneAlarmEnabled: StateFlow<Boolean> = _phoneAlarmEnabled.asStateFlow()
+    private val _phoneAlarmTargetMinutes = MutableStateFlow(phoneAlarmStore.targetMinutes)
+    /** Earliest acceptable wake time, minutes since midnight. */
+    val phoneAlarmTargetMinutes: StateFlow<Int> = _phoneAlarmTargetMinutes.asStateFlow()
+    private val _phoneAlarmWindowMinutes = MutableStateFlow(phoneAlarmStore.windowMinutes)
+    /** How long after the target the guaranteed hard deadline sits. */
+    val phoneAlarmWindowMinutes: StateFlow<Int> = _phoneAlarmWindowMinutes.asStateFlow()
+
+    // Wind-down nudge (#207) — cross-platform, NON-safety-critical. A gentle evening notification
+    // derived from the user's earliest wake time. Inexact daily alarm; no exact-alarm permission.
+    private val windDownStore = WindDownStore.from(appContext)
+    private val _windDownEnabled = MutableStateFlow(windDownStore.enabled)
+    /** Whether the evening wind-down nudge is scheduled. */
+    val windDownEnabled: StateFlow<Boolean> = _windDownEnabled.asStateFlow()
 
     // MARK: - Today's cached metrics
 
@@ -440,12 +467,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val apple = repository.workouts("apple-health", 0L, now) +
                 repository.workouts("health-connect", 0L, now)
             val detected = repository.workouts(repository.computedDeviceId(deviceId), 0L, now)
+            // Imported lifting sessions (Hevy / Liftosaur) carry a volume-load note but no HR — they're
+            // a strength-volume estimate, not cardio. Kept OUT of the strap HR-fill below so we never
+            // fabricate a heart rate the lift never measured.
+            val lifting = repository.workouts(LiftingImporter.SOURCE_ID, 0L, now)
             val markers = repository.dismissedDetected(deviceId)
             // Fill imported sessions' missing HR from strap samples (#77), same as before; detected /
             // manual rows already carry their own HR so they pass through unchanged.
             val filled = repository.fillWorkoutHrFromStrap((whoop + apple + detected))
             _workouts.value = WorkoutEditing
-                .filterDismissed(filled, markers)
+                .filterDismissed(filled + lifting, markers)
                 .sortedByDescending { it.startTs }
         }
     }
@@ -687,6 +718,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _smartAlarmMinutes.value = minutes.coerceIn(0, 24 * 60 - 1)
         NoopPrefs.setSmartAlarmMinutes(appContext, _smartAlarmMinutes.value)
         applySmartAlarm()
+    }
+
+    // --- PHONE smart alarm (#207). The setters persist + (re)arm the GUARANTEED OS alarm via
+    // [SmartAlarmScheduler]: scheduling the hard deadline FIRST, before any smart logic exists, so the
+    // fallback is in place the instant the alarm is enabled. Whether the strap is connected is
+    // irrelevant — that's the whole point. The exact-alarm permission is requested by the UI before
+    // these are called on a fresh enable; if it's somehow missing, arm() returns null and the UI shows
+    // the permission prompt. ---
+
+    /** Enable/disable the phone smart alarm. Enabling arms the guaranteed hard-deadline alarm now;
+     *  disabling cancels it. Returns false if exact alarms aren't permitted (the UI then routes the
+     *  user to grant the permission and re-tries). */
+    fun setPhoneAlarmEnabled(enabled: Boolean): Boolean {
+        if (enabled && !SmartAlarmScheduler.canScheduleExact(appContext)) return false
+        phoneAlarmStore.enabled = enabled
+        _phoneAlarmEnabled.value = enabled
+        if (enabled) SmartAlarmScheduler.arm(appContext, phoneAlarmStore)
+        else SmartAlarmScheduler.cancel(appContext, phoneAlarmStore)
+        return true
+    }
+
+    /** Change the earliest wake time (minutes since midnight). Re-arms while enabled so the new
+     *  window takes effect immediately. */
+    fun setPhoneAlarmTargetMinutes(minutes: Int) {
+        phoneAlarmStore.targetMinutes = minutes
+        _phoneAlarmTargetMinutes.value = phoneAlarmStore.targetMinutes
+        if (phoneAlarmStore.enabled) SmartAlarmScheduler.arm(appContext, phoneAlarmStore)
+        // The wind-down nudge is derived from the wake time, so keep it in step.
+        if (windDownStore.enabled) WindDownScheduler.schedule(appContext, windDownStore, phoneAlarmStore.targetMinutes)
+    }
+
+    /** Change the window length (minutes after the target the hard deadline sits). Re-arms while
+     *  enabled. */
+    fun setPhoneAlarmWindowMinutes(minutes: Int) {
+        phoneAlarmStore.windowMinutes = minutes
+        _phoneAlarmWindowMinutes.value = phoneAlarmStore.windowMinutes
+        if (phoneAlarmStore.enabled) SmartAlarmScheduler.arm(appContext, phoneAlarmStore)
+    }
+
+    /** Whether the OS will honour an exact alarm right now (API 31+ gates it behind a permission). */
+    fun canScheduleExactAlarms(): Boolean = SmartAlarmScheduler.canScheduleExact(appContext)
+
+    /** Enable/disable the evening wind-down nudge. Schedules the daily inexact reminder from the
+     *  current earliest wake time, or cancels it. */
+    fun setWindDownEnabled(enabled: Boolean) {
+        windDownStore.enabled = enabled
+        _windDownEnabled.value = enabled
+        if (enabled) WindDownScheduler.schedule(appContext, windDownStore, phoneAlarmStore.targetMinutes)
+        else WindDownScheduler.cancel(appContext)
     }
 
     // --- Illness watch (opt-out; the evaluation itself is the pure IllnessWatch.evaluate).

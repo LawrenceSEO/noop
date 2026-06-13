@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.Icon
@@ -52,6 +53,7 @@ import com.noop.data.ImportSummary
 import com.noop.ingest.AppleHealthImporter
 import com.noop.ingest.HealthConnectImporter
 import com.noop.ingest.HealthConnectWriter
+import com.noop.ingest.LiftingImporter
 import com.noop.ingest.NutritionCsvImporter
 import com.noop.ingest.WhoopCsvImporter
 import kotlinx.coroutines.Dispatchers
@@ -110,6 +112,8 @@ fun DataSourcesScreen(vm: AppViewModel) {
     // so its card counts days-with-calories and weigh-ins straight off that table.
     var nutritionDays by remember { mutableStateOf<Int?>(null) }
     var nutritionWeighIns by remember { mutableStateOf<Int?>(null) }
+    // Imported lifting (Hevy / Liftosaur) writes workouts under its own source ("lifting").
+    var liftingWorkouts by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) {
         val now = System.currentTimeMillis() / 1000
@@ -122,6 +126,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
         hcWorkouts = vm.repo.workouts("health-connect", 0L, now).size
         nutritionDays = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "calories_in", "0000-01-01", "9999-12-31").size
         nutritionWeighIns = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "weight", "0000-01-01", "9999-12-31").size
+        liftingWorkouts = vm.repo.workouts(LiftingImporter.SOURCE_ID, 0L, now).size
     }
 
     // Whole-store backup: export to a user-created document; import from a picked one.
@@ -177,6 +182,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
         hcWorkouts = vm.repo.workouts("health-connect", 0L, nowS).size
         nutritionDays = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "calories_in", "0000-01-01", "9999-12-31").size
         nutritionWeighIns = vm.repo.metricSeries(NutritionCsvImporter.SOURCE_ID, "weight", "0000-01-01", "9999-12-31").size
+        liftingWorkouts = vm.repo.workouts(LiftingImporter.SOURCE_ID, 0L, nowS).size
     }
 
     // Run an importer off the main thread, refresh the counts, then toast the result.
@@ -204,6 +210,15 @@ fun DataSourcesScreen(vm: AppViewModel) {
     val nutritionImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> if (uri != null) runImport { NutritionCsvImporter.importCsv(context, uri, vm.repo) } }
+
+    // Lifting: imported workouts also need the Workouts list to reload (runImport only re-counts).
+    val liftingImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) runImport {
+            LiftingImporter.importExport(context, uri, vm.repo).also { vm.loadWorkouts() }
+        }
+    }
 
     // Health Connect permission request → import once granted.
     val hcPermissionLauncher = rememberLauncherForActivityResult(
@@ -467,6 +482,33 @@ fun DataSourcesScreen(vm: AppViewModel) {
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { nutritionImportLauncher.launch(arrayOf("*/*")) }
+        }
+
+        // --- Lifting log (Hevy CSV / Liftosaur JSON) ---
+        SourceCard(
+            title = "Lifting log (Hevy / Liftosaur)",
+            icon = Icons.Filled.FitnessCenter,
+            subtitle = "Import your strength-training history from a Hevy CSV export or a Liftosaur " +
+                "JSON export. Each workout becomes a Strength session with a training-volume " +
+                "estimate (weight × reps) — a volume figure, not a measured strain, so it never " +
+                "changes your Effort.",
+        ) {
+            val hasLifting = (liftingWorkouts ?: 0) > 0
+            StatePill(
+                title = if (hasLifting) "Imported" else "Nothing imported",
+                tone = if (hasLifting) StrandTone.Accent else StrandTone.Neutral,
+                showsDot = true,
+            )
+            CountLine(
+                primary = liftingWorkouts?.let { "$it workouts" } ?: "—",
+                secondary = "volume load shown per session",
+            )
+            BackupButton(
+                label = "Import lifting log…",
+                icon = Icons.Filled.FileUpload,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { liftingImportLauncher.launch(arrayOf("*/*")) }
         }
 
         // --- Live WHOOP strap over BLE ---

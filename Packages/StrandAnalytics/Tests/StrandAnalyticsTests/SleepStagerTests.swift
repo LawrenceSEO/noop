@@ -331,6 +331,93 @@ final class SleepStagerTests: XCTestCase {
         XCTAssertEqual(allLate, ["deep", "deep", "deep", "deep"])
     }
 
+    // MARK: - Fragment merge / hypnogram smoothing (#274)
+
+    /// Expand a [(stage, epochs)] run-list into a flat per-epoch label array.
+    private func expand(_ runs: [(String, Int)]) -> [String] {
+        var out: [String] = []
+        for (s, n) in runs { out.append(contentsOf: repeatElement(s, count: n)) }
+        return out
+    }
+    /// Collapse a flat label array back into [(stage, epochs)] runs for terse assertions.
+    private func runs(_ labels: [String]) -> [(String, Int)] {
+        var out: [(String, Int)] = []
+        for s in labels {
+            if let last = out.last, last.0 == s { out[out.count - 1].1 += 1 }
+            else { out.append((s, 1)) }
+        }
+        return out
+    }
+    private func assertRuns(_ labels: [String], _ expected: [(String, Int)],
+                            _ msg: String = "", file: StaticString = #filePath, line: UInt = #line) {
+        let got = runs(labels)
+        XCTAssertEqual(got.count, expected.count, "\(msg) run count — got \(got)", file: file, line: line)
+        for i in 0..<min(got.count, expected.count) {
+            XCTAssertEqual(got[i].0, expected[i].0, "\(msg) run \(i) stage", file: file, line: line)
+            XCTAssertEqual(got[i].1, expected[i].1, "\(msg) run \(i) len", file: file, line: line)
+        }
+    }
+
+    func testMergeFragmentsAbsorbsSameStageBridge() {
+        // A 2-epoch "deep" fleck (< 6-epoch threshold) bridged by light on both sides is
+        // absorbed: the choppy light→deep→light blip becomes one continuous light block.
+        let input = expand([("light", 8), ("deep", 2), ("light", 8)])
+        let out = SleepStager.mergeFragments(input)
+        XCTAssertEqual(out.count, input.count, "length preserved")
+        assertRuns(out, [("light", 18)], "same-stage bridge")
+    }
+
+    func testMergeFragmentsPreservesGenuineTransition() {
+        // Three real multi-minute blocks (each ≥ 6 epochs = 3 min) — a genuine cycle, not
+        // noise — pass through completely untouched.
+        let input = expand([("light", 10), ("deep", 10), ("rem", 10)])
+        let out = SleepStager.mergeFragments(input)
+        assertRuns(out, [("light", 10), ("deep", 10), ("rem", 10)], "genuine transition")
+    }
+
+    func testMergeFragmentsBiasesLighterOnTie() {
+        // A 3-epoch "deep" fleck between equal-length light and rem neighbours (8 vs 8) is a
+        // tie; the lighter stage (light, rank 1 < rem rank 2) wins so smoothing never inflates
+        // deep/REM. The deep fleck must NOT survive and must NOT become rem.
+        let input = expand([("light", 8), ("deep", 3), ("rem", 8)])
+        let out = SleepStager.mergeFragments(input)
+        assertRuns(out, [("light", 11), ("rem", 8)], "tie → lighter neighbour")
+        XCTAssertFalse(out.contains("deep"), "a stray deep fleck must not survive a tie merge")
+    }
+
+    func testMergeFragmentsFoldsIntoLongerNeighbour() {
+        // A short rem fleck (2) with a longer light neighbour (8) on one side and a short deep
+        // run (4, itself sub-threshold) on the other collapses entirely into light — the longer
+        // neighbour dominates and the trailing short deep folds back too. No deep/REM inflation.
+        let input = expand([("light", 8), ("rem", 2), ("deep", 4)])
+        let out = SleepStager.mergeFragments(input)
+        assertRuns(out, [("light", 14)], "fold into longer neighbour")
+    }
+
+    func testMergeFragmentsLeadingAndTrailingFlecks() {
+        // A leading deep fleck folds forward into light; a trailing rem fleck folds back into
+        // light. Edge runs with only one neighbour are still smoothed.
+        let input = expand([("deep", 2), ("light", 10), ("rem", 2)])
+        let out = SleepStager.mergeFragments(input)
+        assertRuns(out, [("light", 14)], "leading + trailing flecks")
+    }
+
+    func testMergeFragmentsThresholdConstant() {
+        // The threshold is the named 3-min constant, i.e. 6 epochs at 30 s.
+        XCTAssertEqual(SleepStager.fragmentMergeEpochs, 6)
+        // A run exactly AT the threshold (6 epochs) is a real transition and is preserved.
+        let input = expand([("light", 10), ("deep", 6), ("light", 10)])
+        let out = SleepStager.mergeFragments(input)
+        assertRuns(out, [("light", 10), ("deep", 6), ("light", 10)], "at-threshold run kept")
+    }
+
+    func testMergeFragmentsDegenerateInputs() {
+        // Empty and single-run inputs pass through unchanged (nothing to merge into).
+        XCTAssertTrue(SleepStager.mergeFragments([]).isEmpty)
+        let single = expand([("light", 3)])  // sub-threshold but no neighbours
+        assertRuns(SleepStager.mergeFragments(single), [("light", 3)], "single run kept")
+    }
+
     func testSessionAvgHRVRejectsEctopicSpikes() {
         // A 5-min window of steady ~900 ms beats (≈67 bpm) with a +600 ms ectopic
         // spike every 15th beat — the shape of PPG-derived 0x2A37 RR on a WHOOP 5/MG.

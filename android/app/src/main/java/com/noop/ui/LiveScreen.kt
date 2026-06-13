@@ -80,6 +80,8 @@ fun LiveScreen(viewModel: AppViewModel) {
     // Imperial/Metric display preference (D#103). Live distance/pace are computed from metres + sec/km
     // and re-labelled here. Display-only.
     val unitSystem = UnitPrefs.system(LocalContext.current)
+    // Effort display scale (#268) — routes the live + saved workout Effort read-outs. Display-only.
+    val effortScale = UnitPrefs.effortScale(LocalContext.current)
 
     // The runtime Bluetooth permission gates scanning. If it isn't granted, the Connect button
     // REQUESTS it (rather than silently doing nothing), then connects once allowed. Shared with
@@ -217,7 +219,7 @@ fun LiveScreen(viewModel: AppViewModel) {
                         StatTile(modifier = Modifier.weight(1f), label = "HR", value = bpm?.toString() ?: "—")
                         StatTile(modifier = Modifier.weight(1f), label = "Avg", value = if (w.avgHr > 0) "${w.avgHr}" else "—")
                         StatTile(modifier = Modifier.weight(1f), label = "Peak", value = if (w.peakHr > 0) "${w.peakHr}" else "—")
-                        StatTile(modifier = Modifier.weight(1f), label = "Effort", value = String.format("%.1f", w.liveStrain))
+                        StatTile(modifier = Modifier.weight(1f), label = "Effort", value = UnitFormatter.effortDisplay(w.liveStrain, effortScale))
                     }
                     if (w.gpsEnabled) {
                         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
@@ -277,7 +279,7 @@ fun LiveScreen(viewModel: AppViewModel) {
                     "$mins min",
                     row.distanceM?.let { liveDistance(it, unitSystem) },
                     row.avgHr?.let { "$it avg bpm" },
-                    row.strain?.let { String.format("strain %.1f", it) },
+                    row.strain?.let { "strain ${UnitFormatter.effortDisplay(it, effortScale)}" },
                 )
                 Text(
                     "✓ ${row.sport} saved · ${parts.joinToString(" · ")}",

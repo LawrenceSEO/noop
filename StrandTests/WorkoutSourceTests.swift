@@ -23,6 +23,7 @@ final class WorkoutSourceTests: XCTestCase {
         XCTAssertEqual(WorkoutSource.classify("my-whoop-noop"), .detected)
         XCTAssertEqual(WorkoutSource.classify("whoop"), .whoop)
         XCTAssertEqual(WorkoutSource.classify("manual"), .manual)
+        XCTAssertEqual(WorkoutSource.classify("lifting"), .lifting)
         XCTAssertEqual(WorkoutSource.classify("apple_health"), .apple)
         XCTAssertEqual(WorkoutSource.classify("apple-health"), .apple)
     }

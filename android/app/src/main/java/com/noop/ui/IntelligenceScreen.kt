@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -32,7 +33,6 @@ import com.noop.analytics.RecoveryForecaster
 import com.noop.data.DailyMetric
 import java.time.LocalDate
 import java.util.Calendar
-import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -51,6 +51,9 @@ import kotlin.math.roundToInt
 fun IntelligenceScreen(vm: AppViewModel) {
     val days by vm.recentDays.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
+
+    // Effort display scale (#268) — routes every Effort value/label on this screen. Display-only.
+    val effortScale = UnitPrefs.effortScale(LocalContext.current)
 
     // Newest first for the per-day list (macOS ForEach renders most-recent at top).
     val ordered = remember(days) { days.reversed() }
@@ -77,8 +80,8 @@ fun IntelligenceScreen(vm: AppViewModel) {
         subtitle = "Charge, effort and rest — scored with the model, explained in plain terms.",
     ) {
         forecast?.let { ForecastCard(it) }
-        ExplainerCard()
-        ModelBreakdownCard()
+        ExplainerCard(effortScale)
+        ModelBreakdownCard(effortScale)
 
         if (ordered.isEmpty()) {
             // While the strap is mid-offload, say so — an empty list reads as final otherwise (#77).
@@ -125,7 +128,7 @@ fun IntelligenceScreen(vm: AppViewModel) {
                     )
                 }
             } else {
-                filtered.forEach { day -> DayCard(day) }
+                filtered.forEach { day -> DayCard(day, effortScale) }
             }
         }
     }
@@ -191,7 +194,7 @@ private fun sleepHoursLabel(hours: Double): String {
 // MARK: - Explainer (ported from IntelligenceView.explainerCard)
 
 @Composable
-private fun ExplainerCard() {
+private fun ExplainerCard(effortScale: EffortScale) {
     NoopCard(padding = 20.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
@@ -209,10 +212,10 @@ private fun ExplainerCard() {
             Text(
                 "Charge weighs your heart-rate variability against your personal baseline " +
                     "(~55%), resting heart rate (~20%), rest quality (~15%), respiration (~5%) " +
-                    "and skin-temperature deviation (~5%). Effort is a 0–100 cardiovascular load " +
-                    "from time spent in each heart-rate zone. Rest is staged from movement and " +
-                    "heart rate. The full on-device recompute from the strap's raw streams is a " +
-                    "later port; the scores below are read from each day's cached metrics.",
+                    "and skin-temperature deviation (~5%). Effort is a 0–${UnitFormatter.effortScaleMax(effortScale)} " +
+                    "cardiovascular load from time spent in each heart-rate zone. Rest is staged " +
+                    "from movement and heart rate. The full on-device recompute from the strap's raw " +
+                    "streams is a later port; the scores below are read from each day's cached metrics.",
                 style = NoopType.subhead,
                 color = Palette.textSecondary,
             )
@@ -252,7 +255,7 @@ private fun EmptyNote() {
 // data, so it's always legible even before any day is scored.
 
 @Composable
-private fun ModelBreakdownCard() {
+private fun ModelBreakdownCard(effortScale: EffortScale) {
     NoopCard(padding = 20.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Overline("Charge model")
@@ -273,7 +276,7 @@ private fun ModelBreakdownCard() {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    "0–100 scale",
+                    "0–${UnitFormatter.effortScaleMax(effortScale)} scale",
                     style = NoopType.captionNumber,
                     color = Palette.metricCyan,
                 )
@@ -326,7 +329,7 @@ private fun Meter(fraction: Float, color: Color) {
 // colors, then a thin Effort meter for at-a-glance load.
 
 @Composable
-private fun DayCard(d: DailyMetric) {
+private fun DayCard(d: DailyMetric, effortScale: EffortScale) {
     NoopCard(padding = 18.dp) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -348,7 +351,7 @@ private fun DayCard(d: DailyMetric) {
                 )
                 DayStat(
                     "Effort",
-                    d.strain?.let { String.format(Locale.US, "%.1f", it) } ?: "—",
+                    d.strain?.let { UnitFormatter.effortDisplay(it, effortScale) } ?: "—",
                     Palette.metricCyan,
                     Modifier.weight(1f),
                 )

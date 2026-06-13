@@ -16,42 +16,72 @@ struct MetricDescriptor: Identifiable, Hashable {
     var description: String? = nil
     var id: String { source + ":" + key }
 
+    /// True for the Effort metric (#268). Its stored value is 0–100; the effort-scale toggle converts
+    /// the DISPLAYED number + unit onto WHOOP's 0–21 axis. Mirrors the Android `MetricSpec.whoopEffort`
+    /// gate (`key == "strain"`) — the only value-converting metric in the catalog.
+    private var isEffort: Bool { key == "strain" }
+
     func format(_ v: Double) -> String {
         let n = decimals == 0 ? String(Int(v.rounded())) : String(format: "%.\(decimals)f", v)
         return unit.isEmpty ? n : "\(n) \(unit)"
     }
 
+    /// Effort-aware plain format (#268): the Effort metric's stored 0–100 value is shown on the selected
+    /// scale (its number + "/100"→"/21" unit); every other metric is scale-agnostic and falls through to
+    /// the unit-less `format` above. Callers that don't carry an effort scale get `.hundred` (no change).
+    func format(_ v: Double, effortScale: EffortScale) -> String {
+        guard isEffort else { return format(v) }
+        let n = UnitFormatter.effortDisplay(v, scale: effortScale)
+        return "\(n) \(displayUnit(effortScale: effortScale))"
+    }
+
     /// Unit-aware format: for the three SI-stored metrics that have a non-metric counterpart
-    /// (weight/lean_mass in kg, skin_temp in °C) convert + relabel via `UnitFormatter`. Every other
-    /// metric (%, bpm, ms, min, …) is unit-agnostic and falls through to the plain `format` above, so
-    /// the imperial toggle only ever touches the values that actually have an imperial form.
-    func format(_ v: Double, system: UnitSystem, temperature: TemperatureUnit) -> String {
+    /// (weight/lean_mass in kg, skin_temp in °C) convert + relabel via `UnitFormatter`. The Effort
+    /// metric follows its own 0–100↔0–21 scale (#268). Every other metric (%, bpm, ms, min, …) is
+    /// scale-agnostic and falls through to the plain `format` above, so each toggle only ever touches
+    /// the values that actually have a converted form.
+    func format(_ v: Double, system: UnitSystem, temperature: TemperatureUnit,
+                effortScale: EffortScale = .hundred) -> String {
         switch unit {
         case "kg":  return UnitFormatter.massFromKilograms(v, system: system)
         case "°C":  return UnitFormatter.temperatureFromCelsius(v, unit: temperature, decimals: decimals)
-        default:    return format(v)
+        default:    return isEffort ? format(v, effortScale: effortScale) : format(v)
         }
     }
 
     /// Like `format`, but for a DIFFERENCE between two values (e.g. the Δ StatTile). A temperature
-    /// delta scales by 9/5 with NO +32 offset; mass/distance deltas scale by their plain factor. The
+    /// delta scales by 9/5 with NO +32 offset; mass/distance deltas scale by their plain factor; an
+    /// Effort delta rescales 0–100→0–21 on the WHOOP scale (#268, no offset — it's a magnitude). The
     /// caller supplies the magnitude (sign is rendered separately).
-    func formatDelta(_ v: Double, system: UnitSystem, temperature: TemperatureUnit) -> String {
+    func formatDelta(_ v: Double, system: UnitSystem, temperature: TemperatureUnit,
+                     effortScale: EffortScale = .hundred) -> String {
         switch unit {
         case "kg":  return UnitFormatter.massFromKilograms(v, system: system)
         case "°C":  return UnitFormatter.temperatureDeltaFromCelsius(v, unit: temperature, decimals: decimals)
-        default:    return format(v)
+        default:
+            guard isEffort else { return format(v) }
+            // A delta on the 0–100 axis rescales by the same ×21/100 factor (the offset-free `effortValue`).
+            let n = UnitFormatter.effortDisplay(v, scale: effortScale)
+            return "\(n) \(displayUnit(effortScale: effortScale))"
         }
     }
 
     /// The unit LABEL as displayed (e.g. the trailing chip in the Metric Explorer list), mapped to the
     /// active system. Only the convertible units change; everything else returns its stored label.
-    func displayUnit(system: UnitSystem, temperature: TemperatureUnit) -> String {
+    func displayUnit(system: UnitSystem, temperature: TemperatureUnit,
+                     effortScale: EffortScale = .hundred) -> String {
         switch unit {
         case "kg":  return UnitFormatter.massUnit(system)
         case "°C":  return UnitFormatter.temperatureUnit(temperature)
-        default:    return unit
+        default:    return isEffort ? displayUnit(effortScale: effortScale) : unit
         }
+    }
+
+    /// The Effort metric's unit LABEL on the selected scale — "/100" or "/21" (#268). Non-Effort metrics
+    /// return their stored label unchanged. Mirrors the Android `MetricSpec.displayUnit` swap.
+    func displayUnit(effortScale: EffortScale) -> String {
+        guard isEffort else { return unit }
+        return "/" + UnitFormatter.effortScaleMax(effortScale)
     }
 }
 

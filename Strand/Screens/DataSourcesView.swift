@@ -15,6 +15,11 @@ struct DataSourcesView: View {
     @State private var nutritionImporting = false
     @State private var nutritionSummary: String?
     @State private var nutritionFailed = false
+    // Lifting (Hevy / Liftosaur) import state — same lightweight, self-contained pattern: parse the
+    // file, upsert workout rows under the "lifting" source, refresh. No HR Effort is touched.
+    @State private var liftingImporting = false
+    @State private var liftingSummary: String?
+    @State private var liftingFailed = false
 
     var body: some View {
         ScreenScaffold(title: "Data Sources",
@@ -22,6 +27,7 @@ struct DataSourcesView: View {
             whoopCard
             appleHealthCard
             nutritionCard
+            liftingCard
             liveCard
         }
         // A single target-aware importer avoids SwiftUI collapsing competing importers on the same screen.
@@ -46,7 +52,7 @@ struct DataSourcesView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(StrandPalette.accent)
-                .disabled(model.hasActiveImport || nutritionImporting)
+                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting)
                 if importingWhoop { ProgressView().controlSize(.small) }
             }
             if let s = model.whoopImportSummary {
@@ -68,7 +74,7 @@ struct DataSourcesView: View {
                         .padding(.horizontal, 6)
                 }
                 .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
-                .disabled(model.hasActiveImport || nutritionImporting)
+                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting)
                 if importingAppleHealth { ProgressView().controlSize(.small) }
             }
             if let s = model.appleHealthImportSummary {
@@ -87,12 +93,31 @@ struct DataSourcesView: View {
                         .padding(.horizontal, 6)
                 }
                 .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
-                .disabled(model.hasActiveImport || nutritionImporting)
+                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting)
                 if nutritionImporting { ProgressView().controlSize(.small) }
             }
             if let s = nutritionSummary {
                 Text(s).font(StrandFont.subhead)
                     .foregroundStyle(nutritionFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
+            }
+        }
+    }
+
+    private var liftingCard: some View {
+        card(title: "Lifting log (Hevy / Liftosaur)", icon: "dumbbell.fill",
+             subtitle: "Import your strength-training history from a Hevy CSV export or a Liftosaur JSON export. Each workout becomes a Strength session with a training-volume estimate (weight × reps). It's a volume figure, not a measured strain — it never changes your Effort.") {
+            HStack(spacing: 12) {
+                Button { presentImporter(.lifting) } label: {
+                    Label(liftingImporting ? "Importing…" : "Choose export…", systemImage: "tray.and.arrow.down")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.borderedProminent).tint(StrandPalette.accent)
+                .disabled(model.hasActiveImport || nutritionImporting || liftingImporting)
+                if liftingImporting { ProgressView().controlSize(.small) }
+            }
+            if let s = liftingSummary {
+                Text(s).font(StrandFont.subhead)
+                    .foregroundStyle(liftingFailed ? StrandPalette.statusWarning : StrandPalette.statusPositive)
             }
         }
     }
@@ -133,6 +158,8 @@ struct DataSourcesView: View {
             model.importAppleHealth(url: url)
         case .nutrition:
             importNutrition(url: url)
+        case .lifting:
+            importLifting(url: url)
         }
     }
 
@@ -176,10 +203,81 @@ struct DataSourcesView: View {
         }
     }
 
+    /// Parse a Hevy CSV / Liftosaur JSON lifting export and upsert each workout as a Strength session
+    /// (source "lifting") with a transparent volume-load note. No `strain` is stored, so these never
+    /// feed the HR-based Effort — lifting volume is reported alongside it, never folded into it.
+    private func importLifting(url: URL) {
+        liftingImporting = true
+        liftingSummary = nil
+        liftingFailed = false
+        Task {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                let result = LiftingImporter.parse(data: data)
+                guard result.sessionCount > 0 else {
+                    liftingSummary = "No workouts found — point at a Hevy CSV export or a Liftosaur JSON export."
+                    liftingFailed = true
+                    liftingImporting = false
+                    return
+                }
+                guard let store = await repo.storeHandle() else {
+                    liftingSummary = "Couldn't open the local store."
+                    liftingFailed = true
+                    liftingImporting = false
+                    return
+                }
+                let rows = result.sessions.map { s in
+                    WorkoutRow(
+                        startTs: Int(s.start.timeIntervalSince1970),
+                        endTs: Int(s.end.timeIntervalSince1970),
+                        sport: LiftingImporter.sport,
+                        source: LiftingImporter.sourceId,
+                        durationS: s.durationS,
+                        energyKcal: nil,
+                        avgHr: nil,
+                        maxHr: nil,
+                        strain: nil,                 // never a fabricated cardiovascular strain
+                        distanceM: nil,
+                        zonesJSON: nil,
+                        notes: s.volumeLoadNote()
+                    )
+                }
+                try await store.upsertWorkouts(rows, deviceId: LiftingImporter.sourceId)
+                await repo.refresh()
+                let totalVolume = result.sessions.reduce(0.0) { $0 + $1.volumeLoadKg }
+                var msg = "Imported \(result.sessionCount) workout\(result.sessionCount == 1 ? "" : "s")"
+                if totalVolume > 0 { msg += " · \(LiftingImporter.groupedKg(totalVolume)) kg total volume" }
+                if let a = result.earliest, let b = result.latest {
+                    let span = liftingDayFormatter
+                    let lo = span.string(from: a), hi = span.string(from: b)
+                    if lo != hi { msg += " · \(lo) – \(hi)" }
+                }
+                if result.skipped > 0 { msg += " · \(result.skipped) skipped" }
+                liftingSummary = msg
+                liftingFailed = false
+            } catch {
+                liftingSummary = "Import failed: \(error.localizedDescription)"
+                liftingFailed = true
+            }
+            liftingImporting = false
+        }
+    }
+
+    private var liftingDayFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")   // sessions are stored at UTC; label the same span
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }
+
     private enum ImportTarget {
         case whoop
         case appleHealth
         case nutrition
+        case lifting
 
         var allowedContentTypes: [UTType] {
             // `.folder` lets macOS users point at an *unzipped* export directory. On iOS the Files
@@ -201,6 +299,10 @@ struct DataSourcesView: View {
                 #endif
             case .nutrition:
                 return [.commaSeparatedText, .plainText]
+            case .lifting:
+                // Hevy exports .csv, Liftosaur exports .json — accept both (plus plain text, since some
+                // share sheets type a .csv as text/plain). The importer sniffs the actual format.
+                return [.commaSeparatedText, .json, .plainText]
             }
         }
     }

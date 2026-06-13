@@ -12,27 +12,39 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Battery5Bar
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -112,7 +124,14 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
     // preference (SharedPreferences isn't reactive — a Settings write triggers recomposition).
     val context = LocalContext.current
     val unitSystem = UnitPrefs.system(context)
+    // Effort display scale (#268) — drives the Effort tile's value + caption. Display-only.
+    val effortScale = UnitPrefs.effortScale(context)
     val profileWeightKg = remember { ProfileStore.from(context).weightKg }
+
+    // Editable Key-Metrics layout (#251) — an ordered list of the enabled tiles, persisted display-only.
+    // SharedPreferences isn't reactive, so it's mirrored into local state and re-read when the editor saves.
+    var showMetricsEditor by remember { mutableStateOf(false) }
+    var enabledKeyMetrics by remember { mutableStateOf(KeyMetricPrefs.enabled(context)) }
 
     // "How your scores work" guide, opened from the per-score ⓘ affordances and the one-time
     // first-run card. `guideSection` carries which score to deep-link to (null = open at the top);
@@ -345,8 +364,39 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
 
         // METRICS — uniform tile grid (two columns), each tile with a 14-day sparkline.
         Spacer(Modifier.height(Metrics.selectorTopUp))
-        SectionHeader("Key Metrics", overline = dayLabel, trailing = "14-day trend")
-        MetricGrid(displayMetric, window, recoveryCalibration, unitSystem, weightKg, profileWeightKg, importedStepsForDay, restScoreForDay, onScoreInfo = openGuide)
+        // Section header + an Edit affordance to open the local layout editor (#251). No new nav
+        // destination — a dialog over Today. The Box lets the SectionHeader keep its trailing label while
+        // the Edit control sits to its right.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.weight(1f)) {
+                SectionHeader("Key Metrics", overline = dayLabel, trailing = "14-day trend")
+            }
+            TextButton(
+                onClick = { showMetricsEditor = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = Palette.accent),
+            ) {
+                Icon(
+                    Icons.Filled.Tune,
+                    contentDescription = "Edit Key Metrics",
+                    modifier = Modifier.size(Metrics.iconSmall),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Edit", style = NoopType.footnote)
+            }
+        }
+        MetricGrid(
+            d = displayMetric,
+            w = window,
+            recoveryCalibration = recoveryCalibration,
+            unitSystem = unitSystem,
+            effortScale = effortScale,
+            latestWeightKg = weightKg,
+            profileWeightKg = profileWeightKg,
+            importedStepsForDay = importedStepsForDay,
+            restScore = restScoreForDay,
+            enabledMetrics = enabledKeyMetrics,
+            onScoreInfo = openGuide,
+        )
         HeartRateTrendCard(viewModel, days, selectedDay, todayDate)
         TodayWorkoutsSection(footer.recentWorkouts)
         // Honest, dismissible 12-hourly donation ask — a card in the flow, never a dialog.
@@ -370,6 +420,20 @@ fun TodayScreen(viewModel: AppViewModel, onSupport: () -> Unit = {}) {
                 )
             }
         }
+    }
+
+    // Key-Metrics layout editor (#251) — a Today-local dialog (no new nav destination). Saves the layout
+    // and re-reads it into local state so the grid updates immediately and survives relaunch.
+    if (showMetricsEditor) {
+        KeyMetricsEditorDialog(
+            initial = enabledKeyMetrics,
+            onDismiss = { showMetricsEditor = false },
+            onSave = { metrics ->
+                KeyMetricPrefs.setEnabled(context, metrics)
+                enabledKeyMetrics = metrics
+                showMetricsEditor = false
+            },
+        )
     }
 }
 
@@ -519,14 +583,19 @@ private fun MetricGrid(
     w: Window,
     recoveryCalibration: Int? = null,
     unitSystem: UnitSystem = UnitSystem.METRIC,
+    effortScale: EffortScale = EffortScale.HUNDRED,
     latestWeightKg: Double? = null,
     profileWeightKg: Double = 75.0,
     importedStepsForDay: Int? = null,
     restScore: Double? = null,
+    enabledMetrics: List<KeyMetric> = KeyMetric.defaultOrder,
     onScoreInfo: (ScoreSection) -> Unit = {},
 ) {
-    val tiles = listOf<@Composable (Modifier) -> Unit>(
-        { m ->
+    // One builder per tile, keyed by KeyMetric so the grid can be filtered + reordered per the saved
+    // layout (#251). Each builder is byte-for-byte the tile that used to be hard-coded in the list — the
+    // refactor only changes WHICH tiles render and in WHAT order, never how an individual tile looks.
+    val builders: Map<KeyMetric, @Composable (Modifier) -> Unit> = mapOf(
+        KeyMetric.CHARGE to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Charge",
@@ -540,19 +609,19 @@ private fun MetricGrid(
                 sparkColor = Palette.accent,
             )
         },
-        { m ->
+        KeyMetric.EFFORT to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Effort",
-                value = d?.strain?.let { String.format(Locale.US, "%.1f", it) } ?: NO_DATA,
-                caption = d?.strain?.let { "of 100" },
+                value = d?.strain?.let { UnitFormatter.effortDisplay(it, effortScale) } ?: NO_DATA,
+                caption = d?.strain?.let { "of ${UnitFormatter.effortScaleMax(effortScale)}" },
                 accent = d?.strain?.let { Palette.strainColor(it) } ?: Palette.textTertiary,
                 spark = w.strain,
                 sparkColor = Palette.strain066,
                 onInfo = { onScoreInfo(ScoreSection.EFFORT) },
             )
         },
-        { m ->
+        KeyMetric.REST to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Rest",
@@ -564,7 +633,7 @@ private fun MetricGrid(
                 onInfo = { onScoreInfo(ScoreSection.REST) },
             )
         },
-        { m ->
+        KeyMetric.HRV to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "HRV",
@@ -575,7 +644,7 @@ private fun MetricGrid(
                 sparkColor = Palette.metricPurple,
             )
         },
-        { m ->
+        KeyMetric.RESTING_HR to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Resting HR",
@@ -586,7 +655,7 @@ private fun MetricGrid(
                 sparkColor = Palette.metricRose,
             )
         },
-        { m ->
+        KeyMetric.BLOOD_OXYGEN to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Blood Oxygen",
@@ -597,7 +666,7 @@ private fun MetricGrid(
                 sparkColor = Palette.metricCyan,
             )
         },
-        { m ->
+        KeyMetric.RESPIRATORY to { m ->
             SparkStatTile(
                 modifier = m,
                 label = "Respiratory",
@@ -608,7 +677,7 @@ private fun MetricGrid(
                 sparkColor = Palette.accent,
             )
         },
-        { m ->
+        KeyMetric.STEPS to { m ->
             // Steps: prefer the on-device WHOOP 5/MG @57 counter (DailyMetric.steps); if the strap
             // didn't supply one — e.g. a WHOOP 4.0, which counts steps in the official WHOOP app but
             // doesn't expose them to NOOP over Bluetooth — fall back to the steps imported from Apple
@@ -624,7 +693,7 @@ private fun MetricGrid(
                 sparkColor = Palette.metricCyan,
             )
         },
-        { m ->
+        KeyMetric.WEIGHT to { m ->
             // Latest Apple Health / Health Connect body weight, else the SI profile weight (#107). The
             // caption stays honest — "from profile" only when we fell back. Always shown in the user's
             // chosen units via the shared UnitFormatter (matches AppleHealthScreen's weight tile).
@@ -639,7 +708,7 @@ private fun MetricGrid(
                 sparkColor = Palette.accent,
             )
         },
-        { m ->
+        KeyMetric.CALORIES to { m ->
             // On-device APPROXIMATE whole-day active+resting energy from HR alone (DailyMetric
             // .activeKcalEst). A heart-rate estimate, not cloud/clinical parity — shown rounded. (#107)
             SparkStatTile(
@@ -653,6 +722,9 @@ private fun MetricGrid(
             )
         },
     )
+
+    // Resolve the enabled tiles to their builders, dropping any unknown key defensively.
+    val tiles = enabledMetrics.mapNotNull { builders[it] }
 
     // Two-column grid built from rows so tile heights stay uniform (mirrors the
     // macOS adaptive grid; a fixed 2-up layout reads well on phone widths).
@@ -1306,4 +1378,141 @@ internal fun nightStreak(days: List<DailyMetric>, anchor: LocalDate): Int {
         cursor = cursor.minusDays(1)
     }
     return streak
+}
+
+// MARK: - Key-Metrics layout editor (#251)
+//
+// A Today-local dialog (no new nav destination — another lane owns the nav graph) for choosing which
+// Key-Metric tiles show on the Control Center and in what order. Display-only: it edits the persisted
+// `today.keyMetrics` layout, never any stored metric. A switch hides/shows a tile and the up/down arrows
+// reorder it — explicit arrows rather than drag so it behaves the same on every device. Mirrors the macOS
+// KeyMetricsEditorSheet.
+
+/** One editor row: a tile with its current enabled flag. The working list is rebuilt on each edit. */
+private data class EditableMetric(val metric: KeyMetric, val enabled: Boolean)
+
+@Composable
+private fun KeyMetricsEditorDialog(
+    initial: List<KeyMetric>,
+    onDismiss: () -> Unit,
+    onSave: (List<KeyMetric>) -> Unit,
+) {
+    // Working copy: enabled tiles first (saved order), then the disabled remainder in the default order —
+    // so toggling one on drops it at the end of the visible set, and every known tile is listed once.
+    val items = remember {
+        val enabledSet = initial.toHashSet()
+        mutableStateListOf<EditableMetric>().apply {
+            initial.forEach { add(EditableMetric(it, true)) }
+            KeyMetric.defaultOrder.filter { it !in enabledSet }.forEach { add(EditableMetric(it, false)) }
+        }
+    }
+
+    fun move(from: Int, to: Int) {
+        if (from in items.indices && to in items.indices) {
+            val item = items.removeAt(from)
+            items.add(to, item)
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = Palette.surfaceOverlay,
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Edit Key Metrics", style = NoopType.title2, color = Palette.textPrimary)
+                    Text(
+                        "Choose which tiles show on your Control Center and reorder them with the arrows.",
+                        style = NoopType.subhead,
+                        color = Palette.textSecondary,
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    items.forEachIndexed { index, item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Switch(
+                                checked = item.enabled,
+                                onCheckedChange = { items[index] = item.copy(enabled = it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Palette.surfaceBase,
+                                    checkedTrackColor = Palette.accent,
+                                    uncheckedThumbColor = Palette.textSecondary,
+                                    uncheckedTrackColor = Palette.surfaceInset,
+                                    uncheckedBorderColor = Palette.hairline,
+                                ),
+                                modifier = Modifier.semantics { contentDescription = "Show ${item.metric.title}" },
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                item.metric.title,
+                                style = NoopType.body,
+                                color = if (item.enabled) Palette.textPrimary else Palette.textTertiary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(
+                                onClick = { move(index, index - 1) },
+                                enabled = index > 0,
+                                modifier = Modifier.size(Metrics.iconButton),
+                            ) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowUp,
+                                    contentDescription = "Move ${item.metric.title} up",
+                                    tint = if (index > 0) Palette.textSecondary else Palette.textTertiary,
+                                    modifier = Modifier.size(Metrics.iconSmall),
+                                )
+                            }
+                            IconButton(
+                                onClick = { move(index, index + 1) },
+                                enabled = index < items.lastIndex,
+                                modifier = Modifier.size(Metrics.iconButton),
+                            ) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = "Move ${item.metric.title} down",
+                                    tint = if (index < items.lastIndex) Palette.textSecondary else Palette.textTertiary,
+                                    modifier = Modifier.size(Metrics.iconSmall),
+                                )
+                            }
+                        }
+                        if (index < items.lastIndex) {
+                            HorizontalDivider(color = Palette.hairline, thickness = 1.dp)
+                        }
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = {
+                            // Reset to the canonical default: every tile enabled, original order.
+                            items.clear()
+                            KeyMetric.defaultOrder.forEach { items.add(EditableMetric(it, true)) }
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Palette.textSecondary),
+                    ) { Text("Reset", style = NoopType.body) }
+                    Spacer(Modifier.weight(1f))
+                    Button(
+                        onClick = { onSave(items.filter { it.enabled }.map { it.metric }) },
+                        // At least one tile must stay visible — an empty grid reads as a bug, not a choice.
+                        enabled = items.any { it.enabled },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Palette.accent,
+                            contentColor = Palette.surfaceBase,
+                        ),
+                    ) { Text("Done", style = NoopType.captionNumber) }
+                }
+            }
+        }
+    }
 }

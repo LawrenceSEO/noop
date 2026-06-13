@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Air
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Bolt
@@ -123,6 +124,7 @@ private enum class Destination(
 
     // Group: System
     Automations("automations", "Automations", Icons.Filled.Bolt),
+    SmartAlarm("smart_alarm", "Smart Alarm", Icons.Filled.Alarm),
     DataSources("data_sources", "Data Sources", Icons.Filled.Storage),
     Notifications("notifications", "Notifications", Icons.Filled.Notifications),
     Support("support", "Support", Icons.Filled.Tune),
@@ -152,7 +154,7 @@ private val drawerGroups: List<DrawerGroup> = listOf(
     )),
     DrawerGroup("Health", listOf(Destination.Health, Destination.VitalSigns, Destination.AppleHealth)),
     DrawerGroup("System", listOf(
-        Destination.Automations, Destination.DataSources,
+        Destination.Automations, Destination.SmartAlarm, Destination.DataSources,
         Destination.Notifications, Destination.Support, Destination.Settings,
     )),
 )
@@ -333,6 +335,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                 composable(Destination.Coach.route) { CoachScreen() }
                 composable(Destination.Explore.route) { TrendsExploreScreen(viewModel) }
                 composable(Destination.Automations.route) { AutomationsScreen(viewModel) }
+                composable(Destination.SmartAlarm.route) { SmartAlarmScreen(viewModel) }
                 composable(Destination.Workouts.route) { WorkoutsScreen(viewModel) }
                 composable(Destination.Support.route) { SupportScreen() }
                 composable(Destination.Intelligence.route) { IntelligenceScreen(viewModel) }

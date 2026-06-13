@@ -219,6 +219,9 @@ fun SettingsScreen(vm: AppViewModel) {
     var temperatureRaw by remember {
         mutableStateOf(NoopPrefs.of(context).getString(NoopPrefs.KEY_TEMPERATURE_UNIT, "") ?: "")
     }
+    // Effort display scale (#268) — show NOOP's native 0–100 Effort or WHOOP's 0–21 Day Strain axis.
+    // Display-only; the stored value never changes. Mirrors into local state like the toggles above.
+    var effortScale by remember { mutableStateOf(UnitPrefs.effortScale(context)) }
 
     // SAF launchers — CreateDocument for export, OpenDocument for import.
     val exportLauncher = rememberLauncherForActivityResult(
@@ -423,7 +426,7 @@ fun SettingsScreen(vm: AppViewModel) {
         SettingsSection(
             icon = Icons.Filled.Straighten,
             title = "Units",
-            blurb = "Choose how distances, weights, heights and temperatures are shown. Your data is always stored the same way — this only changes the display.",
+            blurb = "Choose how distances, weights, heights, temperatures and Effort are shown. Your data is always stored the same way — this only changes the display.",
         ) {
             Column {
                 FormRow(label = "Measurement system") {
@@ -454,6 +457,20 @@ fun SettingsScreen(vm: AppViewModel) {
                         onSelect = {
                             temperatureRaw = it
                             NoopPrefs.setTemperatureUnit(context, TemperatureUnit.fromRaw(it))
+                        },
+                    )
+                }
+                RowDivider()
+                // Effort scale (#268) — NOOP's native 0–100 Effort or WHOOP's 0–21 Day Strain axis.
+                // Display-only; the stored value never changes, so a flip just re-labels every read-out.
+                FormRow(label = "Effort scale") {
+                    SegmentedPillControl(
+                        items = listOf(EffortScale.HUNDRED, EffortScale.WHOOP),
+                        selection = effortScale,
+                        label = { if (it == EffortScale.HUNDRED) "0–100" else "0–21" },
+                        onSelect = {
+                            effortScale = it
+                            UnitPrefs.setEffortScale(context, it)
                         },
                     )
                 }

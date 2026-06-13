@@ -633,6 +633,8 @@ final class Repository: ObservableObject {
         var rows = (try? await store.workouts(deviceId: deviceId, from: lo, to: hi, limit: 5000)) ?? []
         rows += (try? await store.workouts(deviceId: "apple-health", from: lo, to: hi, limit: 5000)) ?? []
         rows += (try? await store.workouts(deviceId: computedDeviceId, from: lo, to: hi, limit: 5000)) ?? []
+        // Imported lifting sessions (Hevy / Liftosaur) live under their own "lifting" source.
+        rows += (try? await store.workouts(deviceId: "lifting", from: lo, to: hi, limit: 5000)) ?? []
         let spans = WorkoutSource.parseDismissedSpans(dismissedDetectedSpans)
         return rows.filter { !WorkoutSource.isDismissed($0, spans: spans) }
             .sorted { $0.startTs > $1.startTs }

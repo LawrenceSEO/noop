@@ -20,6 +20,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
     case dataSources = "Data Sources"
     case notifications = "Notifications"
     case automation = "Automations"
+    case smartAlarm = "Smart Alarm"
     case settings = "Settings"
     case support = "Support"
 
@@ -47,6 +48,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .dataSources: return "Data Sources"
         case .notifications: return "Notifications"
         case .automation: return "Automations"
+        case .smartAlarm: return "Smart Alarm"
         case .settings: return "Settings"
         case .support: return "Support"
         }
@@ -72,6 +74,7 @@ enum NavItem: String, CaseIterable, Identifiable, Hashable {
         case .dataSources: return "square.and.arrow.down.fill"
         case .notifications: return "bell.badge.fill"
         case .automation: return "wand.and.stars"
+        case .smartAlarm: return "alarm.fill"
         case .settings: return "gearshape.fill"
         case .support: return "heart.fill"
         }
@@ -138,6 +141,7 @@ struct RootView: View {
         case .dataSources: DataSourcesView()
         case .notifications: NotificationSettingsView()
         case .automation: AutomationsView()
+        case .smartAlarm: SmartAlarmView()
         case .settings: SettingsView()
         case .support: SupportView()
         }

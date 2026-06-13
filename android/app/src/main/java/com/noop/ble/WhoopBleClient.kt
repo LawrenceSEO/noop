@@ -607,6 +607,17 @@ class WhoopBleClient(
                     )
                 }.onSuccess {
                     log("Backfill: post-sync scoring pass done")
+                    // #277 diagnostic: surface the day-key the dashboard treats as "today" against the
+                    // newest banked row, so a UTC-bucket vs local-day split (rows persist but Today
+                    // freezes) shows up plainly in the shared strap log. Best-effort — a diagnostic read
+                    // must never break scoring.
+                    runCatching {
+                        val merged = repository.daysMerged(deviceId)
+                        val newest = merged.maxByOrNull { it.day }?.day ?: "—"
+                        val todayKey = com.noop.ui.logicalDayKeyNow()
+                        val present = if (merged.any { it.day == todayKey }) "present" else "MISSING"
+                        log("Backfill: ${merged.size} day(s) banked; newest=$newest, dashboard-today=$todayKey ($present)")
+                    }
                 }.onFailure {
                     // The scoring pass now hops to Dispatchers.Default; shutdown() cancels it, which is
                     // not a scoring failure — rethrow so the cancellation isn't swallowed/mis-logged. (#125)

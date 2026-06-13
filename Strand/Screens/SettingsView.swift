@@ -38,6 +38,9 @@ struct SettingsView: View {
     // imperial entry. Temperature has a separate override so °C/°F can be picked independently.
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
     @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    // Effort display scale (#268). Display-only — Effort stays stored 0–100, this only chooses whether
+    // it's shown on NOOP's 0–100 axis or WHOOP's 0–21 Day Strain axis.
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
     private var temperatureUnit: TemperatureUnit {
         UnitPrefs.resolveTemperature(system: unitSystem, override: temperatureRaw)
@@ -266,7 +269,7 @@ struct SettingsView: View {
         SettingsSection(
             icon: "ruler",
             title: "Units",
-            blurb: "Choose how distances, weights, heights and temperatures are shown. Your data is always stored the same way — this only changes the display."
+            blurb: "Choose how distances, weights, heights, temperatures and Effort are shown. Your data is always stored the same way — this only changes the display."
         ) {
             VStack(spacing: 0) {
                 FormRow(label: "Measurement system") {
@@ -292,6 +295,19 @@ struct SettingsView: View {
                     .pickerStyle(.segmented)
                     .fixedSize()
                     .accessibilityLabel("Temperature unit")
+                }
+                rowDivider
+                // Effort scale (#268) — show NOOP's native 0–100 Effort or WHOOP's 0–21 Day Strain axis.
+                // Display-only; the stored value never changes, so a flip just re-labels every Effort read-out.
+                FormRow(label: "Effort scale") {
+                    Picker("Effort scale", selection: $effortScaleRaw) {
+                        Text("0–100").tag(EffortScale.hundred.rawValue)
+                        Text("0–21").tag(EffortScale.whoop.rawValue)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .accessibilityLabel("Effort scale")
                 }
             }
         }

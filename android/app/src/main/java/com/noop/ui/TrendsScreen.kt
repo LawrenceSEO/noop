@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -66,6 +67,9 @@ fun TrendsScreen(vm: AppViewModel) {
         fullHistory = vm.repo.daysMerged("my-whoop")
     }
     val days = fullHistory ?: reactiveDays
+
+    // Effort display scale (#268) — routes the Effort small-multiple's numbers + unit. Display-only.
+    val effortScale = UnitPrefs.effortScale(LocalContext.current)
 
     var range by remember { mutableStateOf(TrendsRange.Quarter) }
 
@@ -139,10 +143,12 @@ fun TrendsScreen(vm: AppViewModel) {
             fmt = { "${it.roundToInt()}" },
         )
         MetricTrendCard(
-            title = "Effort", unit = "/ 100",
+            // Plotted values stay on the stored 0–100 scale (line shape unchanged); only the displayed
+            // numbers + unit follow the Effort-scale toggle, converted inside `fmt`. (#268)
+            title = "Effort", unit = "/ ${UnitFormatter.effortScaleMax(effortScale)}",
             color = Palette.strain066,
             resolved = strain,
-            fmt = { String.format(Locale.US, "%.1f", it) },
+            fmt = { UnitFormatter.effortDisplay(it, effortScale) },
         )
 
         // --- Recovery history strip (stands in for the macOS YearHeatStrip) ---

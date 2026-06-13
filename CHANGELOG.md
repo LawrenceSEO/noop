@@ -17,6 +17,29 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 2.11.0 — A smart wake alarm, live workout mode, an editable Today, and lifting imports
+
+- **New (Android):** a **smart wake alarm** — set a wake window and NOOP wakes you on a lighter sleep
+  phase inside it, with a guaranteed alarm at the end of the window. The guaranteed wake is a real OS
+  alarm that fires even if Bluetooth drops or the app is closed. Thanks @subscriptiondestroyer (#207).
+- **New:** an evening **wind-down nudge** on every platform — a gentle reminder, timed from your usual
+  wake time and sleep need, that it's time to start winding down. (A sideloaded iPhone/Mac app can't
+  sound a dependable wake alarm, so those get the nudge, not the wake alarm.)
+- **New:** **live workout mode** — a full-screen in-exercise view with big live heart rate, your
+  current HR zone, elapsed time and live effort. Thanks @subscriptiondestroyer (#238).
+- **New:** **editable Key Metrics** — choose which tiles appear on Today and reorder them to taste.
+  Thanks @umarXBT (#251).
+- **New:** an **Effort scale toggle** — show Effort on NOOP's 0–100 axis or WHOOP's familiar 0–21
+  Day-Strain axis, everywhere it appears. Display-only; your stored data is unchanged. Thanks @umarXBT (#268).
+- **Improved:** the **sleep hypnogram is smoother** — brief sub-3-minute stage flecks merge into their
+  neighbours so the graph reads cleanly, biased toward the lighter stage so it never inflates Deep or
+  REM. Thanks @umarXBT (#274).
+- **New:** **import your lifting log** from Hevy (CSV) or Liftosaur (JSON) — each workout lands as a
+  Strength session with an honest training volume-load (weight × reps), kept separate from your
+  heart-rate Effort. On-device, nothing uploaded. Thanks @marceauboul and @maddognik (#272/#232).
+
+---
+
 ## 2.10.0 — Sleep-debt, daytime stress, a recovery forecast, and day-by-day navigation
 
 - **New:** a **sleep-debt ledger** on the Sleep screen — a running 14-night balance of how much sleep

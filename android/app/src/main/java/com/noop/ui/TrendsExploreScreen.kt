@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -104,11 +105,22 @@ private data class MetricSpec(
      *  three headline scores — Charge / Effort / Rest — carry one today; everything else is null.
      *  Mirrors macOS `MetricDescriptor.description`. */
     val description: String? = null,
+    /** Effort display scale (#268) — only meaningful for the "strain" column, where it converts the
+     *  stored 0–100 value + unit onto WHOOP's 0–21 axis. Default 0–100 leaves every other column alone. */
+    val effortScale: EffortScale = EffortScale.HUNDRED,
 ) {
+    /** True for the Effort column when the user picked WHOOP's 0–21 scale (the only value-converting case). */
+    private val whoopEffort: Boolean get() = key == "strain" && effortScale == EffortScale.WHOOP
+
+    /** The unit label, swapped to "/21" for the Effort column on the WHOOP scale. */
+    val displayUnit: String get() = if (whoopEffort) "/21" else unit
+
     fun format(v: Double): String {
         if (!v.isFinite()) return "—"
-        val n = if (decimals == 0) "${v.roundToInt()}" else String.format(Locale.US, "%.${decimals}f", v)
-        return if (unit.isEmpty()) n else "$n $unit"
+        // Effort (#268): the stored value is 0–100; convert to 0–21 for display when that scale is picked.
+        val shown = if (whoopEffort) UnitFormatter.effortValue(v, EffortScale.WHOOP) else v
+        val n = if (decimals == 0) "${shown.roundToInt()}" else String.format(Locale.US, "%.${decimals}f", shown)
+        return if (displayUnit.isEmpty()) n else "$n $displayUnit"
     }
 }
 
@@ -244,9 +256,14 @@ fun TrendsExploreScreen(vm: AppViewModel) {
         builtInMetrics + extras
     }
 
+    // Effort display scale (#268) — carried on the selected spec so the Effort column's value + unit
+    // follow the toggle through every read-out (hero, footer stats, Y-axis). Display-only.
+    val effortScale = UnitPrefs.effortScale(LocalContext.current)
+
     var selectedKey by remember { mutableStateOf(builtInMetrics.first().key) }
     var range by remember { mutableStateOf(ExploreRange.Month) }
-    val selected = metrics.firstOrNull { it.key == selectedKey } ?: metrics.first()
+    val selected = (metrics.firstOrNull { it.key == selectedKey } ?: metrics.first())
+        .copy(effortScale = effortScale)
 
     // Build the full ascending series for the selected metric. Built-ins come straight off
     // the reactive recentDays; metricSeries-backed metrics are loaded on demand.

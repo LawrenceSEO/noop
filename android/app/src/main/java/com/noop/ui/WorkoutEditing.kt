@@ -14,7 +14,7 @@ import com.noop.data.WorkoutRow
  */
 
 /** Origin of a workout row, classified from its stored `source` column. */
-enum class WorkoutSource { WHOOP, APPLE, DETECTED, MANUAL }
+enum class WorkoutSource { WHOOP, APPLE, DETECTED, MANUAL, LIFTING }
 
 object WorkoutEditing {
 
@@ -28,6 +28,7 @@ object WorkoutEditing {
         return when {
             s.endsWith("-noop") -> WorkoutSource.DETECTED // BEFORE whoop: "my-whoop-noop" contains "whoop"
             s == "manual" -> WorkoutSource.MANUAL
+            s == "lifting" -> WorkoutSource.LIFTING       // imported Hevy / Liftosaur strength session
             s.contains("whoop") -> WorkoutSource.WHOOP
             else -> WorkoutSource.APPLE
         }

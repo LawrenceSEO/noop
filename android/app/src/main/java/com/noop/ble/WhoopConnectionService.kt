@@ -15,6 +15,9 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.noop.NoopApplication
 import com.noop.R
+import com.noop.alarm.SleepWindowWatcher
+import com.noop.alarm.SmartAlarmScheduler
+import com.noop.alarm.SmartAlarmStore
 import com.noop.analytics.IllnessWatch
 import com.noop.location.GpsSession
 import com.noop.location.LocationTracker
@@ -79,6 +82,17 @@ class WhoopConnectionService : Service() {
      *  In-memory on purpose: the persisted once-a-day gate (NoopPrefs) handles dedupe across
      *  process restarts and the AppViewModel call site. */
     private var lastIllnessAlert: String? = null
+
+    /** Smart-alarm light-sleep watcher (#207). Feeds the live HR while we're inside the wake window
+     *  and, on a lighter-phase reading, advances the GUARANTEED alarm earlier. It can only ever move
+     *  the alarm earlier within the window — the hard deadline scheduled via AlarmManager is the floor
+     *  of safety, so if BLE drops or no light sleep is found the user is still woken at the window end.
+     *  The detector is reset each time we (re)enter a window. */
+    private val sleepWatcher = SleepWindowWatcher()
+    private var inAlarmWindow = false
+
+    /** The smart-alarm HR collector, alive for the life of the service. */
+    private var alarmJob: Job? = null
 
     private val ble get() = (application as NoopApplication).ble
     private val repo get() = (application as NoopApplication).repository
@@ -186,6 +200,35 @@ class WhoopConnectionService : Service() {
                         }
                     } else {
                         startForegroundCompat(buildNotification(ble.state.value, null), tracking = false)
+                    }
+                }
+        }
+
+        // Smart alarm light-sleep watcher (#207). While the alarm is enabled and we're inside the wake
+        // window, feed each live HR reading to the pure detector; on a lighter-phase reading, advance
+        // the GUARANTEED alarm earlier (the scheduler clamps to the window and can never move it later
+        // or cancel it — the hard deadline set via AlarmManager is independent of this collector). The
+        // FGS is the only long-lived BLE collector, so this is what lets the smart move happen with the
+        // app closed. If the service isn't running (user opted out of background) the hard deadline
+        // still fires — that's the point of the fallback.
+        alarmJob?.cancel()
+        alarmJob = scope.launch {
+            val store = SmartAlarmStore.from(this@WhoopConnectionService)
+            ble.state
+                .map { it.heartRate ?: 0 }
+                .conflate()
+                .collect { hr ->
+                    if (!store.enabled || store.scheduledDeadlineMs <= 0L) {
+                        inAlarmWindow = false
+                        return@collect
+                    }
+                    val now = System.currentTimeMillis()
+                    val inWindow = now in store.scheduledWindowStartMs until store.scheduledDeadlineMs
+                    if (inWindow && !inAlarmWindow) sleepWatcher.reset()   // fresh night
+                    inAlarmWindow = inWindow
+                    if (!inWindow) return@collect
+                    if (sleepWatcher.shouldWake(hr)) {
+                        SmartAlarmScheduler.advanceTo(this@WhoopConnectionService, store, now)
                     }
                 }
         }

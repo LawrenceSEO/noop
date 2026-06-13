@@ -13,12 +13,13 @@ import WhoopStore
 /// Classification order matters: "-noop" is checked BEFORE "whoop" because the computed id
 /// "my-whoop-noop" also contains the substring "whoop".
 enum WorkoutSource: Equatable {
-    case whoop, apple, detected, manual
+    case whoop, apple, detected, manual, lifting
 
     static func classify(_ source: String) -> WorkoutSource {
         let s = source.lowercased()
         if s.hasSuffix("-noop") { return .detected }   // BEFORE whoop: "my-whoop-noop" contains "whoop"
         if s == "manual" { return .manual }
+        if s == "lifting" { return .lifting }          // imported Hevy / Liftosaur strength session
         if s.contains("whoop") { return .whoop }
         return .apple
     }

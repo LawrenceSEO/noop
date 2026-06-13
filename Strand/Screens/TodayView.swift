@@ -30,6 +30,15 @@ struct TodayView: View {
     // Imperial/Metric display preference (D#103). Only the Weight tile carries a convertible unit here.
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
+    // Effort display scale (#268) — drives the Effort tile's value + caption. Display-only.
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+
+    // Editable Key-Metrics layout (#251) — an ordered list of the enabled tiles, persisted display-only.
+    // Empty/unset shows the full default order. The "Edit" affordance on the section opens a local sheet.
+    @AppStorage(KeyMetricPrefs.layoutKey) private var keyMetricsRaw = ""
+    @State private var showingMetricsEditor = false
+    private var enabledKeyMetrics: [KeyMetric] { KeyMetricPrefs.decodeEnabled(keyMetricsRaw) }
 
     // 14-day sparkline series, keyed by metric key. Loaded once in .task.
     @State private var sparks: [String: [Double]] = [:]
@@ -416,96 +425,136 @@ struct TodayView: View {
 
     @ViewBuilder
     private var metricsSection: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            // The section header keeps its "14-day trend" trailing label; an Edit control sits beside it
+            // to open the local layout editor (#251). No new nav destination — a sheet over Today.
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader("Key Metrics", overline: "\(selectedDayOverline)", trailing: "14-day trend")
+                Button {
+                    showingMetricsEditor = true
+                } label: {
+                    Label("Edit", systemImage: "slider.horizontal.3")
+                        .font(StrandFont.footnote)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(StrandPalette.accent)
+                .accessibilityLabel("Edit Key Metrics")
+                .help("Choose which Key Metrics show and reorder them")
+            }
+            // Render the enabled tiles in the saved order; an empty layout still shows the default set.
+            LazyVGrid(columns: grid, alignment: .leading, spacing: NoopMetrics.gap) {
+                ForEach(enabledKeyMetrics) { metric in
+                    keyMetricTile(metric)
+                }
+            }
+        }
+        .sheet(isPresented: $showingMetricsEditor) {
+            KeyMetricsEditorSheet(layoutRaw: $keyMetricsRaw)
+        }
+    }
+
+    /// One Key-Metric tile, keyed so the grid can be filtered + reordered per the saved layout (#251).
+    /// Each case is byte-for-byte the tile that used to be hard-coded in the grid — the refactor only
+    /// changes WHICH tiles render and in WHAT order, never how an individual tile looks.
+    @ViewBuilder
+    private func keyMetricTile(_ metric: KeyMetric) -> some View {
         let d = displayDay
         let aLatest = appleDays.last
-        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-            SectionHeader("Key Metrics", overline: "\(selectedDayOverline)", trailing: "14-day trend")
-            LazyVGrid(columns: grid, alignment: .leading, spacing: NoopMetrics.gap) {
-                StatTile(
-                    label: "Charge",
-                    value: d?.recovery.map { "\(Int($0.rounded()))%" }
-                        ?? recoveryCalibration.map { "\($0)/\(Baselines.minNightsSeed)" } ?? "—",
-                    caption: d?.recovery.map { StrandPalette.recoveryState($0).capitalized }
-                        ?? recoveryCalibration.map { _ in "Calibrating" },
-                    accent: d?.recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: sparks["recovery"],
-                    sparkColor: StrandPalette.accent
-                )
-                StatTile(
-                    label: "Effort",
-                    value: d?.strain.map { String(format: "%.1f", $0) } ?? "—",
-                    caption: "of 100",
-                    accent: d?.strain.map { StrandPalette.strainColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: sparks["strain"],
-                    sparkColor: StrandPalette.strain066
-                )
-                .overlay(alignment: .topTrailing) { scoreInfoButton(.effort) }
-                StatTile(
-                    label: "Rest",
-                    value: restScore.map { "\(Int($0.rounded()))%" } ?? "—",
-                    caption: restCaption(d),
-                    accent: restScore.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
-                    sparkline: sparks["sleep_total_min"],
-                    sparkColor: StrandPalette.metricPurple
-                )
-                .overlay(alignment: .topTrailing) { scoreInfoButton(.rest) }
-                StatTile(
-                    label: "HRV",
-                    value: d?.avgHrv.map { "\(Int($0.rounded()))" } ?? "—",
-                    caption: "ms",
-                    accent: StrandPalette.metricPurple,
-                    sparkline: sparks["hrv"],
-                    sparkColor: StrandPalette.metricPurple
-                )
-                StatTile(
-                    label: "Resting HR",
-                    value: d?.restingHr.map { "\($0)" } ?? "—",
-                    caption: "bpm",
-                    accent: StrandPalette.metricRose,
-                    sparkline: sparks["rhr"],
-                    sparkColor: StrandPalette.metricRose
-                )
-                StatTile(
-                    label: "Blood Oxygen",
-                    value: d?.spo2Pct.map { String(format: "%.0f%%", $0) } ?? "—",
-                    caption: "SpO₂",
-                    accent: StrandPalette.metricCyan,
-                    sparkline: sparks["spo2"],
-                    sparkColor: StrandPalette.metricCyan
-                )
-                StatTile(
-                    label: "Respiratory",
-                    value: d?.respRateBpm.map { String(format: "%.1f", $0) } ?? latestString("resp_rate", decimals: 1),
-                    caption: "rpm",
-                    accent: StrandPalette.accent,
-                    sparkline: sparks["resp_rate"],
-                    sparkColor: StrandPalette.accent
-                )
-                StatTile(
-                    label: "Steps",
-                    value: aLatest?.steps.map { intString(Double($0)) } ?? latestString("steps", decimals: 0),
-                    caption: "today",
-                    accent: StrandPalette.metricCyan,
-                    sparkline: sparks["steps"],
-                    sparkColor: StrandPalette.metricCyan
-                )
-                StatTile(
-                    label: "Weight",
-                    value: weightTile(aLatest?.weightKg).value,
-                    caption: weightTile(aLatest?.weightKg).caption,
-                    accent: StrandPalette.accent,
-                    sparkline: sparks["weight"],
-                    sparkColor: StrandPalette.accent
-                )
-                StatTile(
-                    label: "Calories",
-                    value: caloriesValue(aLatest),
-                    caption: "active",
-                    accent: StrandPalette.metricAmber,
-                    sparkline: sparks["active_kcal"],
-                    sparkColor: StrandPalette.metricAmber
-                )
-            }
+        switch metric {
+        case .charge:
+            StatTile(
+                label: "Charge",
+                value: d?.recovery.map { "\(Int($0.rounded()))%" }
+                    ?? recoveryCalibration.map { "\($0)/\(Baselines.minNightsSeed)" } ?? "—",
+                caption: d?.recovery.map { StrandPalette.recoveryState($0).capitalized }
+                    ?? recoveryCalibration.map { _ in "Calibrating" },
+                accent: d?.recovery.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
+                sparkline: sparks["recovery"],
+                sparkColor: StrandPalette.accent
+            )
+        case .effort:
+            StatTile(
+                label: "Effort",
+                value: d?.strain.map { UnitFormatter.effortDisplay($0, scale: effortScale) } ?? "—",
+                caption: "of \(UnitFormatter.effortScaleMax(effortScale))",
+                accent: d?.strain.map { StrandPalette.strainColor($0) } ?? StrandPalette.textPrimary,
+                sparkline: sparks["strain"],
+                sparkColor: StrandPalette.strain066
+            )
+            .overlay(alignment: .topTrailing) { scoreInfoButton(.effort) }
+        case .rest:
+            StatTile(
+                label: "Rest",
+                value: restScore.map { "\(Int($0.rounded()))%" } ?? "—",
+                caption: restCaption(d),
+                accent: restScore.map { StrandPalette.recoveryColor($0) } ?? StrandPalette.textPrimary,
+                sparkline: sparks["sleep_total_min"],
+                sparkColor: StrandPalette.metricPurple
+            )
+            .overlay(alignment: .topTrailing) { scoreInfoButton(.rest) }
+        case .hrv:
+            StatTile(
+                label: "HRV",
+                value: d?.avgHrv.map { "\(Int($0.rounded()))" } ?? "—",
+                caption: "ms",
+                accent: StrandPalette.metricPurple,
+                sparkline: sparks["hrv"],
+                sparkColor: StrandPalette.metricPurple
+            )
+        case .restingHr:
+            StatTile(
+                label: "Resting HR",
+                value: d?.restingHr.map { "\($0)" } ?? "—",
+                caption: "bpm",
+                accent: StrandPalette.metricRose,
+                sparkline: sparks["rhr"],
+                sparkColor: StrandPalette.metricRose
+            )
+        case .bloodOxygen:
+            StatTile(
+                label: "Blood Oxygen",
+                value: d?.spo2Pct.map { String(format: "%.0f%%", $0) } ?? "—",
+                caption: "SpO₂",
+                accent: StrandPalette.metricCyan,
+                sparkline: sparks["spo2"],
+                sparkColor: StrandPalette.metricCyan
+            )
+        case .respiratory:
+            StatTile(
+                label: "Respiratory",
+                value: d?.respRateBpm.map { String(format: "%.1f", $0) } ?? latestString("resp_rate", decimals: 1),
+                caption: "rpm",
+                accent: StrandPalette.accent,
+                sparkline: sparks["resp_rate"],
+                sparkColor: StrandPalette.accent
+            )
+        case .steps:
+            StatTile(
+                label: "Steps",
+                value: aLatest?.steps.map { intString(Double($0)) } ?? latestString("steps", decimals: 0),
+                caption: "today",
+                accent: StrandPalette.metricCyan,
+                sparkline: sparks["steps"],
+                sparkColor: StrandPalette.metricCyan
+            )
+        case .weight:
+            StatTile(
+                label: "Weight",
+                value: weightTile(aLatest?.weightKg).value,
+                caption: weightTile(aLatest?.weightKg).caption,
+                accent: StrandPalette.accent,
+                sparkline: sparks["weight"],
+                sparkColor: StrandPalette.accent
+            )
+        case .calories:
+            StatTile(
+                label: "Calories",
+                value: caloriesValue(aLatest),
+                caption: "active",
+                accent: StrandPalette.metricAmber,
+                sparkline: sparks["active_kcal"],
+                sparkColor: StrandPalette.metricAmber
+            )
         }
     }
 

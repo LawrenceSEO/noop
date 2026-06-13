@@ -18,12 +18,20 @@ struct LiveView: View {
     @AppStorage("selectedWhoopModel") private var selectedModelRaw = WhoopModel.whoop4.rawValue
     private var selectedModel: WhoopModel { WhoopModel(rawValue: selectedModelRaw) ?? .whoop4 }
 
+    /// Effort display scale (#268) — routes the live + saved workout Effort read-outs. Display-only.
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+
     /// Smoothed, spike-filtered live HR from AppModel (median over a short window).
     private var displayHR: Int? { model.bpm }
     private var activeConnection: Bool { live.connected && live.bonded }
 
     /// Drives the focal HR ring's gentle pulse — toggled on every new HR value so the ring "beats".
     @State private var heartPulse = false
+
+    /// Live workout mode (#238) — presents the full in-exercise screen while a manual workout is
+    /// active. Auto-opens when a workout begins; closing just hides it (the workout keeps recording).
+    @State private var showLiveWorkout = false
 
     var body: some View {
         ScreenScaffold(title: "Live Body Console",
@@ -62,6 +70,13 @@ struct LiveView: View {
         .onChange(of: live.connected) { _ in refreshLiveSession() }
         .onChange(of: displayHR) { _ in
             withAnimation(StrandMotion.pulse) { heartPulse.toggle() }
+        }
+        // Live workout mode (#238): open the in-exercise screen the moment a workout starts.
+        .onChange(of: model.activeWorkout != nil) { active in if active { showLiveWorkout = true } }
+        .sheet(isPresented: $showLiveWorkout) {
+            LiveWorkoutView(onClose: { showLiveWorkout = false })
+                .environmentObject(model)
+                .environmentObject(live)
         }
     }
 
@@ -486,13 +501,21 @@ struct LiveView: View {
                     workoutStat("HR", model.bpm.map { "\($0)" } ?? "—")
                     workoutStat("Avg", w.avgHr > 0 ? "\(w.avgHr)" : "—")
                     workoutStat("Peak", w.peakHr > 0 ? "\(w.peakHr)" : "—")
-                    workoutStat("Effort", String(format: "%.1f", w.liveStrain))
+                    workoutStat("Effort", UnitFormatter.effortDisplay(w.liveStrain, scale: effortScale))
                 }
-                Button(role: .destructive) { model.endWorkout() } label: {
-                    Label("End workout", systemImage: "stop.circle.fill")
-                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                HStack(spacing: 10) {
+                    // Re-open the full live workout screen (#238) after it's been dismissed.
+                    Button { showLiveWorkout = true } label: {
+                        Label("Open live view", systemImage: "rectangle.expand.vertical")
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                    }
+                    .buttonStyle(.bordered).tint(StrandPalette.accent)
+                    Button(role: .destructive) { model.endWorkout() } label: {
+                        Label("End workout", systemImage: "stop.circle.fill")
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent).tint(StrandPalette.metricRose)
                 }
-                .buttonStyle(.borderedProminent).tint(StrandPalette.metricRose)
             }
         }
     }
@@ -510,7 +533,7 @@ struct LiveView: View {
     private func workoutSavedRow(_ row: WorkoutRow) -> some View {
         let mins = Int((row.durationS ?? 0) / 60)
         let parts = ["\(mins) min", row.avgHr.map { "\($0) avg bpm" },
-                     row.strain.map { String(format: "effort %.1f", $0) }].compactMap { $0 }
+                     row.strain.map { "effort \(UnitFormatter.effortDisplay($0, scale: effortScale))" }].compactMap { $0 }
         return HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(StrandPalette.accent)
             Text("Workout saved · \(parts.joined(separator: " · "))")

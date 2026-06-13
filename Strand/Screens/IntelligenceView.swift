@@ -10,6 +10,10 @@ struct IntelligenceView: View {
 
     @State private var range: IntelRange = .month
 
+    // Effort display scale (#268) — routes every Effort value/label on this screen. Display-only.
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+
     var body: some View {
         ScreenScaffold(title: "Intelligence",
                        subtitle: "NOOP scores your charge, effort and rest itself — on-device, no cloud.") {
@@ -159,7 +163,7 @@ struct IntelligenceView: View {
                         .accessibilityHidden(true)
                     Text("How this works").font(StrandFont.headline).foregroundStyle(StrandPalette.textPrimary)
                 }
-                Text("Charge weighs your HRV against your personal baseline (~55%), resting heart rate (~20%), rest quality (~15%), respiration (~5%) and skin-temperature deviation (~5%). Effort is a 0–100 cardiovascular load from time in heart-rate zones. Rest is staged from movement and heart rate. Everything is computed here from the strap's raw data — it works for any day NOOP collected raw streams.")
+                Text("Charge weighs your HRV against your personal baseline (~55%), resting heart rate (~20%), rest quality (~15%), respiration (~5%) and skin-temperature deviation (~5%). Effort is a 0–\(UnitFormatter.effortScaleMax(effortScale)) cardiovascular load from time in heart-rate zones. Rest is staged from movement and heart rate. Everything is computed here from the strap's raw data — it works for any day NOOP collected raw streams.")
                     .font(StrandFont.subhead).foregroundStyle(StrandPalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -176,7 +180,7 @@ struct IntelligenceView: View {
                 }
                 HStack(spacing: 0) {
                     stat("Charge", d.recovery.map { "\(Int($0.rounded()))%" } ?? "—", recoveryColor(d.recovery))
-                    stat("Effort", d.strain.map { String(format: "%.1f", $0) } ?? "—", StrandPalette.metricCyan)
+                    stat("Effort", d.strain.map { UnitFormatter.effortDisplay($0, scale: effortScale) } ?? "—", StrandPalette.metricCyan)
                     stat("Rest", d.sleepMin.map { "\(Int($0 / 60))h \(Int($0.truncatingRemainder(dividingBy: 60)))m" } ?? "—", StrandPalette.metricPurple)
                     stat("HRV", d.hrv.map { "\(Int($0.rounded()))" } ?? "—", StrandPalette.metricPurple)
                     stat("RHR", d.rhr.map { "\($0)" } ?? "—", StrandPalette.metricRose)

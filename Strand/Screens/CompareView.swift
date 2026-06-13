@@ -110,6 +110,12 @@ private struct CompareSeries: Identifiable {
 struct CompareView: View {
     @EnvironmentObject var repo: Repository
 
+    // Effort display scale (#268) — routes the Effort metric's min/max + hover read-outs onto WHOOP's
+    // 0–21 axis; display-only, the normalized overlay shape is untouched. Every other metric is
+    // scale-agnostic (see MetricDescriptor.format).
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+
     // Distinct, high-legibility series colors (avoid the recovery/strain ramps so
     // overlay lines read as categorical, not as a value gradient).
     private static let seriesPalette: [Color] = [
@@ -359,7 +365,9 @@ struct CompareView: View {
                     : "Each line min–max normalized within \(range.phrase) · hover for real values",
                 trailing: "\(nonEmpty.count) series"
             ) {
-                OverlayChart(series: nonEmpty, height: NoopMetrics.chartHeight)
+                // The overlay is min–max NORMALIZED 0–1, so the Effort scale never touches the line shape;
+                // only the per-series hover read-outs convert (passed through to the tooltip). (#268)
+                OverlayChart(series: nonEmpty, effortScale: effortScale, height: NoopMetrics.chartHeight)
             } footer: {
                 legend(nonEmpty)
             }
@@ -377,13 +385,14 @@ struct CompareView: View {
                         .font(StrandFont.subhead)
                         .foregroundStyle(StrandPalette.textPrimary)
                     Spacer()
-                    Text("\(s.metric.format(s.realMin)) – \(s.metric.format(s.realMax))")
+                    // Real min/max labels honour the Effort scale (#268); other metrics are unchanged.
+                    Text("\(s.metric.format(s.realMin, effortScale: effortScale)) – \(s.metric.format(s.realMax, effortScale: effortScale))")
                         .font(StrandFont.captionNumber)
                         .foregroundStyle(StrandPalette.textSecondary)
                 }
                 .padding(.vertical, 7)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(s.metric.title), range \(s.metric.format(s.realMin)) to \(s.metric.format(s.realMax))")
+                .accessibilityLabel("\(s.metric.title), range \(s.metric.format(s.realMin, effortScale: effortScale)) to \(s.metric.format(s.realMax, effortScale: effortScale))")
                 if idx < series.count - 1 {
                     Divider().overlay(StrandPalette.hairline)
                 }
@@ -599,6 +608,9 @@ private struct FlowChips: View {
 /// the nearest day.
 private struct OverlayChart: View {
     let series: [CompareSeries]
+    /// Effort display scale (#268) — passed through to the hover tooltip's real-value read-outs. The
+    /// plotted points stay min–max normalized 0–1, so the line shape is unaffected.
+    var effortScale: EffortScale = .hundred
     var height: CGFloat = 260
 
     @State private var hoverX: CGFloat? = nil
@@ -701,6 +713,7 @@ private struct OverlayChart: View {
                         MultiTooltip(
                             day: day,
                             series: series,
+                            effortScale: effortScale,
                             anchorX: cx,
                             container: geo.size
                         )
@@ -739,6 +752,8 @@ private struct OverlayChart: View {
 private struct MultiTooltip: View {
     let day: String
     let series: [CompareSeries]
+    /// Effort display scale (#268) — the per-series real value converts onto WHOOP's 0–21 axis when set.
+    var effortScale: EffortScale = .hundred
     let anchorX: CGFloat
     let container: CGSize
 
@@ -762,7 +777,7 @@ private struct MultiTooltip: View {
                         .font(StrandFont.caption)
                         .foregroundStyle(StrandPalette.textSecondary)
                     Spacer(minLength: 12)
-                    Text(s.value(on: day).map { s.metric.format($0) } ?? "—")
+                    Text(s.value(on: day).map { s.metric.format($0, effortScale: effortScale) } ?? "—")
                         .font(StrandFont.captionNumber)
                         .foregroundStyle(StrandPalette.textPrimary)
                 }

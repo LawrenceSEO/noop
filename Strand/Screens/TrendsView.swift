@@ -44,6 +44,10 @@ struct TrendsView: View {
 
     @State private var range: Range = .quarter
 
+    // Effort display scale (#268) — routes the Effort small-multiple's numbers + unit. Display-only.
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+
     // yyyy-MM-dd → Date (en_US_POSIX, UTC), per task spec.
     private static let dayParser: DateFormatter = {
         let f = DateFormatter()
@@ -264,12 +268,14 @@ struct TrendsView: View {
                     fmt: { "\(Int($0.rounded()))" }
                 )
                 metricChart(
-                    title: "Effort", unit: "/ 100",
+                    // Plotted points + range stay on the stored 0–100 scale (line shape unchanged); only the
+                    // displayed numbers + unit follow the Effort-scale toggle, converted inside `fmt`. (#268)
+                    title: "Effort", unit: "/ \(UnitFormatter.effortScaleMax(effortScale))",
                     points: strainPts,
                     subtitle: strain.caption,
                     gradient: StrandPalette.strainGradient,
                     range: valueRange(strainPts, fallback: 0...100),
-                    fmt: { String(format: "%.1f", $0) }
+                    fmt: { UnitFormatter.effortDisplay($0, scale: effortScale) }
                 )
             }
         }

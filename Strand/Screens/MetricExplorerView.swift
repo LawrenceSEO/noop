@@ -200,13 +200,16 @@ private struct MetricRow: View {
     let metric: MetricDescriptor
     let isEmpty: Bool
 
-    // Trailing unit chip follows the Imperial/Metric preference (kg→lb, °C→°F).
+    // Trailing unit chip follows the Imperial/Metric preference (kg→lb, °C→°F) and the Effort scale
+    // (/100→/21, #268).
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
     @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
     private var unitLabel: String {
         let system = UnitSystem(rawValue: unitSystemRaw) ?? .metric
         let temp = UnitPrefs.resolveTemperature(system: system, override: temperatureRaw)
-        return metric.displayUnit(system: system, temperature: temp)
+        let effort = UnitPrefs.resolveEffortScale(effortScaleRaw)
+        return metric.displayUnit(system: system, temperature: temp, effortScale: effort)
     }
 
     var body: some View {
@@ -269,11 +272,17 @@ struct MetricDetailView: View {
     // here; everything else is unit-agnostic and renders unchanged.
     @AppStorage(UnitPrefs.systemKey) private var unitSystemRaw = UnitSystem.metric.rawValue
     @AppStorage(UnitPrefs.temperatureKey) private var temperatureRaw = ""
+    // Effort display scale (#268) — routes the Effort metric's numbers + unit; display-only, the plotted
+    // series stays 0–100. Every other metric is scale-agnostic (see MetricDescriptor.format).
+    @AppStorage(UnitPrefs.effortScaleKey) private var effortScaleRaw = EffortScale.hundred.rawValue
     private var unitSystem: UnitSystem { UnitSystem(rawValue: unitSystemRaw) ?? .metric }
     private var temperatureUnit: TemperatureUnit {
         UnitPrefs.resolveTemperature(system: unitSystem, override: temperatureRaw)
     }
-    private func fmt(_ v: Double) -> String { metric.format(v, system: unitSystem, temperature: temperatureUnit) }
+    private var effortScale: EffortScale { UnitPrefs.resolveEffortScale(effortScaleRaw) }
+    private func fmt(_ v: Double) -> String {
+        metric.format(v, system: unitSystem, temperature: temperatureUnit, effortScale: effortScale)
+    }
 
     @State private var range: ExploreRange = .month
     /// Full ascending series for this metric — ALL history.
@@ -627,7 +636,7 @@ struct MetricDetailView: View {
     private func signed(_ delta: Double) -> String {
         // A difference between two readings: route through the delta formatter so a temperature Δ
         // scales without the +32 offset.
-        (delta >= 0 ? "+" : "−") + metric.formatDelta(abs(delta), system: unitSystem, temperature: temperatureUnit)
+        (delta >= 0 ? "+" : "−") + metric.formatDelta(abs(delta), system: unitSystem, temperature: temperatureUnit, effortScale: effortScale)
     }
 
     private func correlationColor(_ r: Double) -> Color {

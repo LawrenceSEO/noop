@@ -477,7 +477,7 @@ struct WorkoutsView: View {
             Button("Edit…") { editWorkout(row) }
             Divider()
             Button("Delete", role: .destructive) { delete(row) }
-        case .whoop, .apple:
+        case .whoop, .apple, .lifting:
             // Imported history is read-only; offer a copy-to-manual edit path that doesn't touch it.
             Button("Duplicate as manual…") { editWorkout(asManualCopy(row)) }
         }
@@ -509,6 +509,7 @@ struct WorkoutsView: View {
             case .apple:    return ("Apple", StrandPalette.metricCyan, "Source Apple Health")
             case .detected: return ("Detected", StrandPalette.metricPurple, "Source on-device detected")
             case .manual:   return ("Manual", StrandPalette.statusWarning, "Source manual entry")
+            case .lifting:  return ("Lifting", StrandPalette.zone2, "Source imported lifting log")
             }
         }()
         // String interpolation lifts the computed label into a LocalizedStringKey (SourceBadge's type).

@@ -29,18 +29,37 @@ enum TemperatureUnit: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// How the Effort score is displayed (#268). NOOP's Effort is stored 0–100 (StrainScorer.maxStrain = 100);
+/// people coming from WHOOP often think in its 0–21 Day Strain axis, so this purely cosmetic toggle lets
+/// the SAME stored value be shown on either scale. Default is NOOP's own 0–100 — the data never changes.
+enum EffortScale: String, CaseIterable, Identifiable {
+    /// NOOP's native 0–100 axis (the stored value, one decimal).
+    case hundred
+    /// WHOOP's 0–21 Day Strain axis — the stored 0–100 value rescaled down for display only.
+    case whoop
+    var id: String { rawValue }
+}
+
 /// UserDefaults keys for the two unit preferences. Public-ish (internal) so `SettingsView`'s
 /// `@AppStorage(UnitPrefs.systemKey)` and the formatter read the SAME key — no drift.
 enum UnitPrefs {
     static let systemKey = "units.system"
     /// Temperature override. Empty string = "match the length/mass system" (the default).
     static let temperatureKey = "units.temperature"
+    /// Effort display scale (#268). Stored raw is an `EffortScale` rawValue; an unset/unknown value
+    /// resolves to `.hundred` (NOOP's native axis). Mirrored on Android by NoopPrefs("effort.scale").
+    static let effortScaleKey = "effort.scale"
 
     /// Resolve the stored raw values into a concrete temperature unit, applying the
     /// "match the system" default when no explicit override is set.
     static func resolveTemperature(system: UnitSystem, override raw: String) -> TemperatureUnit {
         if let explicit = TemperatureUnit(rawValue: raw) { return explicit }
         return system.temperatureMatching
+    }
+
+    /// Resolve the stored Effort-scale raw value, defaulting to NOOP's native 0–100 axis.
+    static func resolveEffortScale(_ raw: String) -> EffortScale {
+        EffortScale(rawValue: raw) ?? .hundred
     }
 }
 
@@ -167,6 +186,32 @@ enum UnitFormatter {
     /// Temperature unit label only. "°C" / "°F".
     static func temperatureUnit(_ unit: TemperatureUnit) -> String {
         unit == .fahrenheit ? "°F" : "°C"
+    }
+
+    // MARK: Effort scale (stored 0–100 — #268)
+
+    /// NOOP stores Effort 0–100 (StrainScorer.maxStrain = 100). WHOOP's Day Strain axis is 0–21, and
+    /// the import boundary rescales by 100/21 (WhoopExportImporter.dayStrainToEffortScale), so the exact
+    /// inverse for a display-only 0–100 → 0–21 conversion is ×21/100. Kept byte-identical to that factor
+    /// and to the Android `UnitFormatter.EFFORT_SCALE_FACTOR`. A wrong factor is pinned by the formatter tests.
+    static let effortScaleFactor = 21.0 / 100.0
+
+    /// The stored 0–100 Effort value mapped onto the selected display scale (the raw number, no unit).
+    static func effortValue(_ value: Double, scale: EffortScale) -> Double {
+        scale == .whoop ? value * effortScaleFactor : value
+    }
+
+    /// Format a stored 0–100 Effort value for display on the selected scale, to one decimal — the single
+    /// helper every Effort read-out (Today tile, Intelligence, Live, Trends, Workouts) routes through so
+    /// the toggle reaches all of them at once. The stored value is unchanged; only the display converts.
+    static func effortDisplay(_ value: Double, scale: EffortScale) -> String {
+        oneDecimal(effortValue(value, scale: scale))
+    }
+
+    /// The "out of" denominator label for the selected Effort scale — "100" or "21". Used by the tile
+    /// caption ("of 100"/"of 21"), the chart unit ("/ 100"/"/ 21") and the model-breakdown axis label.
+    static func effortScaleMax(_ scale: EffortScale) -> String {
+        scale == .whoop ? "21" : "100"
     }
 
     // MARK: Helpers

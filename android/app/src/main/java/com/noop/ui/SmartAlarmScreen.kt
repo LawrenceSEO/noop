@@ -1,0 +1,311 @@
+package com.noop.ui
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+/**
+ * Smart alarm (#207) — Android phone-based wake, with a guaranteed hard-deadline fallback.
+ *
+ * The user picks the EARLIEST acceptable wake time and a window length. NOOP watches the overnight
+ * strap stream and, if it spots a lighter sleep phase inside the window, wakes you then — but a
+ * GUARANTEED exact OS alarm is always scheduled at the window's END (via AlarmManager), independent
+ * of Bluetooth, the strap, or the app being alive. The smart logic can only ever move the alarm
+ * EARLIER; it can never cancel or skip the fallback. So you're woken by the window's end no matter
+ * what. This screen is explicit about that safety guarantee.
+ *
+ * Also hosts the cross-platform WIND-DOWN nudge toggle (a gentle evening reminder), so both the wake
+ * alarm and the nudge live in one place.
+ */
+@Composable
+fun SmartAlarmScreen(vm: AppViewModel) {
+    val context = LocalContext.current
+    val enabled by vm.phoneAlarmEnabled.collectAsStateWithLifecycle()
+    val targetMinutes by vm.phoneAlarmTargetMinutes.collectAsStateWithLifecycle()
+    val windowMinutes by vm.phoneAlarmWindowMinutes.collectAsStateWithLifecycle()
+
+    // True when exact alarms are permitted. Re-read on each (re)composition because the user can grant
+    // it in Settings and come back — there's no result callback for this special-access permission.
+    var canSchedule by remember { mutableStateOf(vm.canScheduleExactAlarms()) }
+
+    ScreenScaffold(
+        title = "Smart alarm",
+        subtitle = "Wake in a lighter sleep phase — with a guaranteed backup at the window's end.",
+    ) {
+        // The guaranteed-wake card always shows so the safety promise is the first thing read.
+        WindowCard(enabled = enabled, targetMinutes = targetMinutes, windowMinutes = windowMinutes)
+
+        AlarmSettingsCard {
+            ToggleRowLocal(
+                label = "Wake me with a smart alarm",
+                help = "A guaranteed OS alarm is set for the end of your window; the strap stream can move it earlier if you're sleeping lightly.",
+                checked = enabled,
+                onChange = { want ->
+                    if (want && !vm.canScheduleExactAlarms()) {
+                        // No callback for this special-access grant — send the user to the system page,
+                        // and re-read the state when they return (canSchedule recomputes on recompose).
+                        requestExactAlarmAccess(context)
+                        canSchedule = vm.canScheduleExactAlarms()
+                    } else {
+                        val ok = vm.setPhoneAlarmEnabled(want)
+                        canSchedule = vm.canScheduleExactAlarms()
+                        if (!ok) requestExactAlarmAccess(context)
+                    }
+                },
+            )
+
+            if (enabled && !canSchedule) {
+                RowDividerLocal()
+                Text(
+                    "NOOP doesn't have permission to set exact alarms, so your wake isn't guaranteed. " +
+                        "Tap to allow it in system settings.",
+                    style = NoopType.footnote,
+                    color = Palette.statusWarning,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            requestExactAlarmAccess(context)
+                            canSchedule = vm.canScheduleExactAlarms()
+                        },
+                )
+            }
+
+            if (enabled) {
+                RowDividerLocal()
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Wake me no earlier than", style = NoopType.body, color = Palette.textPrimary)
+                        Text("The earliest NOOP will wake you.", style = NoopType.footnote, color = Palette.textTertiary)
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    TimeChip(
+                        minutes = targetMinutes,
+                        accessibilityLabel = "Earliest wake time",
+                        onPicked = { vm.setPhoneAlarmTargetMinutes(it) },
+                    )
+                }
+
+                RowDividerLocal()
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Window length", style = NoopType.body, color = Palette.textPrimary)
+                        Text(
+                            "The guaranteed alarm fires this long after your earliest time.",
+                            style = NoopType.footnote, color = Palette.textTertiary,
+                        )
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    WindowStepper(
+                        windowMinutes = windowMinutes,
+                        onChange = { vm.setPhoneAlarmWindowMinutes(it) },
+                    )
+                }
+            }
+        }
+
+        // The honest explanation of how detection works + its limits.
+        ExplanationCard()
+
+        // The cross-platform wind-down nudge lives here too.
+        WindDownCard(vm)
+    }
+}
+
+// MARK: - Cards
+
+/** The always-visible "you WILL be woken by" guarantee card. */
+@Composable
+private fun WindowCard(enabled: Boolean, targetMinutes: Int, windowMinutes: Int) {
+    val deadline = (targetMinutes + windowMinutes) % (24 * 60)
+    NoopCard(padding = 20.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Shield, contentDescription = null, tint = Palette.accent)
+            Spacer(Modifier.width(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Overline("Guaranteed wake")
+                if (enabled) {
+                    Text(
+                        "Between ${hhmm(targetMinutes)} and ${hhmm(deadline)}",
+                        style = NoopType.title2, color = Palette.textPrimary,
+                    )
+                    Text(
+                        "A backup alarm is set for ${hhmm(deadline)} — it fires even if Bluetooth drops, the strap isn't worn, or NOOP is closed.",
+                        style = NoopType.footnote, color = Palette.textSecondary,
+                    )
+                } else {
+                    Text("Off", style = NoopType.title2, color = Palette.textSecondary)
+                    Text(
+                        "Turn on the smart alarm to wake inside a window you choose.",
+                        style = NoopType.footnote, color = Palette.textTertiary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlarmSettingsCard(content: @Composable () -> Unit) {
+    NoopCard(padding = 20.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Alarm, contentDescription = null, tint = Palette.accent)
+                Spacer(Modifier.width(10.dp))
+                Text("Wake alarm", style = NoopType.headline, color = Palette.textPrimary)
+            }
+            content()
+        }
+    }
+}
+
+/** The cross-platform evening wind-down nudge — a gentle reminder, not an alarm. */
+@Composable
+private fun WindDownCard(vm: AppViewModel) {
+    val enabled by vm.windDownEnabled.collectAsStateWithLifecycle()
+    NoopCard(padding = 20.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Bedtime, contentDescription = null, tint = Palette.accent)
+                Spacer(Modifier.width(10.dp))
+                Text("Wind-down nudge", style = NoopType.headline, color = Palette.textPrimary)
+            }
+            ToggleRowLocal(
+                label = "Remind me to wind down",
+                help = "A gentle evening notification, timed from your wake time and usual sleep need, so you can settle in time. It's a suggestion, not an alarm.",
+                checked = enabled,
+                onChange = { vm.setWindDownEnabled(it) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExplanationCard() {
+    NoopCard(padding = 20.dp) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Bedtime, contentDescription = null, tint = Palette.accent)
+                Spacer(Modifier.width(10.dp))
+                Text("How the smart wake works", style = NoopType.headline, color = Palette.textPrimary)
+            }
+            Text(
+                "While you're inside the window, NOOP watches your live heart rate from the strap. Deep " +
+                    "sleep sits near your nightly low and stays steady; when your heart rate lifts above " +
+                    "that — a sign you're sleeping more lightly or starting to stir — NOOP wakes you a " +
+                    "little early so you come up from a lighter phase.",
+                style = NoopType.footnote, color = Palette.textSecondary,
+            )
+            Text(
+                "This is a coarse cue from heart rate, not a clinical sleep-stage reading. If the strap " +
+                    "isn't streaming — Bluetooth off, not worn, app killed — no early wake happens and the " +
+                    "guaranteed alarm at the window's end still wakes you.",
+                style = NoopType.footnote, color = Palette.textTertiary,
+            )
+        }
+    }
+}
+
+// MARK: - Window stepper (5–60 min in 5-min steps)
+
+@Composable
+private fun WindowStepper(windowMinutes: Int, onChange: (Int) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StepperButton(symbol = "−", onClick = { onChange((windowMinutes - 5).coerceAtLeast(5)) }, label = "Shorten window")
+        Text("$windowMinutes min", style = NoopType.bodyNumber, color = Palette.textPrimary)
+        StepperButton(symbol = "+", onClick = { onChange((windowMinutes + 5).coerceAtMost(60)) }, label = "Lengthen window")
+    }
+}
+
+// MARK: - Local toggle / divider (mirror the AutomationsScreen idiom, kept local to this lane's file)
+
+@Composable
+private fun ToggleRowLocal(label: String, help: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = NoopType.body, color = Palette.textPrimary)
+            Text(help, style = NoopType.footnote, color = Palette.textTertiary)
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Palette.surfaceBase,
+                checkedTrackColor = Palette.accent,
+                uncheckedThumbColor = Palette.textSecondary,
+                uncheckedTrackColor = Palette.surfaceInset,
+                uncheckedBorderColor = Palette.hairline,
+            ),
+        )
+    }
+}
+
+@Composable
+private fun RowDividerLocal() {
+    Spacer(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(Palette.hairline),
+    )
+}
+
+// MARK: - Helpers
+
+private fun hhmm(minutes: Int): String {
+    val m = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60)
+    return "%02d:%02d".format(m / 60, m % 60)
+}
+
+/** Open the system page where the user grants the exact-alarm special-access permission (API 31+).
+ *  There's no runtime dialog for this; the user toggles it in Settings and returns. */
+private fun requestExactAlarmAccess(context: android.content.Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    runCatching {
+        context.startActivity(
+            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.onFailure {
+        // Fall back to the app-details page if the OEM lacks the specific action.
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
+}

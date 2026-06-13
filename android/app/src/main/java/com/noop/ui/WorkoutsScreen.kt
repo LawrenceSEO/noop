@@ -596,7 +596,7 @@ private fun RowActionsMenu(
                         onClick = { open = false; onDelete(row) },
                     )
                 }
-                WorkoutSource.WHOOP, WorkoutSource.APPLE -> {
+                WorkoutSource.WHOOP, WorkoutSource.APPLE, WorkoutSource.LIFTING -> {
                     DropdownMenuItem(
                         text = { Text("Duplicate as manual…", style = NoopType.body, color = Palette.textPrimary) },
                         onClick = { open = false; onEdit(row.copy(source = "manual", sport = WorkoutEditing.displaySport(row.sport))) },
@@ -922,6 +922,7 @@ private val WorkoutRow.sourceBadge: Pair<String, Color>
         // removable (#107); manual = user-logged. Both classify on `source` BEFORE the import labels.
         WorkoutSource.DETECTED -> "Detected" to Palette.metricPurple
         WorkoutSource.MANUAL -> "Manual" to Palette.statusWarning
+        WorkoutSource.LIFTING -> "Lifting" to Palette.zone2 // imported Hevy / Liftosaur strength log
         else -> when (workoutSourceLabel(deviceId, source)) {
             "HC" -> "HC" to Palette.metricPurple
             "Whoop" -> "Whoop" to Palette.accent

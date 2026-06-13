@@ -40,6 +40,25 @@ enum class TemperatureUnit(val raw: String) {
 }
 
 /**
+ * How the Effort score is displayed (#268). NOOP stores Effort 0–100 (StrainScorer.maxStrain = 100);
+ * people coming from WHOOP often think in its 0–21 Day Strain axis, so this purely cosmetic toggle lets
+ * the SAME stored value be shown on either scale. Default is NOOP's own 0–100 — the data never changes.
+ * Mirrors the macOS [EffortScale].
+ */
+enum class EffortScale(val raw: String) {
+    /** NOOP's native 0–100 axis (the stored value, one decimal). */
+    HUNDRED("hundred"),
+
+    /** WHOOP's 0–21 Day Strain axis — the stored 0–100 value rescaled down for display only. */
+    WHOOP("whoop");
+
+    companion object {
+        /** An unset/unknown value resolves to NOOP's native 0–100 axis. */
+        fun fromRaw(raw: String?): EffortScale = entries.firstOrNull { it.raw == raw } ?: HUNDRED
+    }
+}
+
+/**
  * Reads the two unit preferences from [NoopPrefs] and resolves the "match the system" default for
  * temperature. SharedPreferences isn't reactive, so Compose screens read these once into remembered
  * state (exactly like the other toggles) and re-read on a recomposition triggered by the Settings write.
@@ -60,6 +79,18 @@ object UnitPrefs {
     /** Pure resolver shared with the tests: explicit override wins, else follow the system. */
     fun resolveTemperature(system: UnitSystem, override: String?): TemperatureUnit =
         TemperatureUnit.fromRaw(override) ?: system.temperatureMatching
+
+    /** SharedPreferences key for the Effort display scale (#268). Mirrors macOS @AppStorage("effort.scale"). */
+    const val KEY_EFFORT_SCALE = "effort.scale"
+
+    /** The Effort display scale (default 0–100). Read once into Compose state like the other prefs. */
+    fun effortScale(context: Context): EffortScale =
+        EffortScale.fromRaw(NoopPrefs.of(context).getString(KEY_EFFORT_SCALE, null))
+
+    /** Persist the Effort display scale. */
+    fun setEffortScale(context: Context, scale: EffortScale) {
+        NoopPrefs.of(context).edit().putString(KEY_EFFORT_SCALE, scale.raw).apply()
+    }
 }
 
 /**
@@ -179,6 +210,32 @@ object UnitFormatter {
     /** Temperature unit label only. "°C" / "°F". */
     fun temperatureUnit(unit: TemperatureUnit): String =
         if (unit == TemperatureUnit.FAHRENHEIT) "°F" else "°C"
+
+    // MARK: Effort scale (stored 0–100 — #268)
+
+    /**
+     * NOOP stores Effort 0–100 (StrainScorer.maxStrain = 100). WHOOP's Day Strain axis is 0–21, and the
+     * import boundary rescales by 100/21 (WhoopCsvImporter / WhoopExportImporter.dayStrainToEffortScale),
+     * so the exact inverse for a display-only 0–100 → 0–21 conversion is ×21/100. Kept byte-identical to
+     * that factor and to the macOS `UnitFormatter.effortScaleFactor`.
+     */
+    const val EFFORT_SCALE_FACTOR = 21.0 / 100.0
+
+    /** The stored 0–100 Effort value mapped onto the selected display scale (the raw number, no unit). */
+    fun effortValue(value: Double, scale: EffortScale): Double =
+        if (scale == EffortScale.WHOOP) value * EFFORT_SCALE_FACTOR else value
+
+    /**
+     * Format a stored 0–100 Effort value for display on the selected scale, to one decimal — the single
+     * helper every Effort read-out (Today tile, Intelligence, Live, Trends, Workouts) routes through so
+     * the toggle reaches all of them at once. The stored value is unchanged; only the display converts.
+     */
+    fun effortDisplay(value: Double, scale: EffortScale): String =
+        oneDecimal(effortValue(value, scale))
+
+    /** The "out of" denominator label for the selected Effort scale — "100" or "21". */
+    fun effortScaleMax(scale: EffortScale): String =
+        if (scale == EffortScale.WHOOP) "21" else "100"
 
     // MARK: Helpers
 
