@@ -143,13 +143,16 @@ public struct RecoveryRing: View {
             .accessibilityHidden(true)
     }
 
-    /// The brand "on-device core" — a small solid GOLD dot at the exact centre,
-    /// behind the read-out, so the open-ring + core-dot identity stays legible.
+    /// The brand "on-device core" — a small solid GOLD dot at the exact centre. It belongs to the
+    /// glyph-only brand lock-up (logo / nav / onboarding), where it reads as the core of the open
+    /// ring. On a METRIC gauge the centre is occupied by the read-out number, and a dot sitting
+    /// behind the digits just muddies them (community feedback at the v3 launch), so it is hidden
+    /// whenever a number is shown — leaving a clean ring + number + micro-NOOP wordmark.
     private var coreDot: some View {
         Circle()
             .fill(StrandPalette.gold)
             .frame(width: diameter * 0.026, height: diameter * 0.026)
-            .opacity(showsLabel ? 0.28 : 1.0)      // recede under the number; full when glyph-only
+            .opacity(showsLabel ? 0.0 : 1.0)       // hidden under the number; full when glyph-only
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

@@ -665,10 +665,11 @@ fun BevelGauge(
                         drawCircle(color = Color.White, radius = stroke * 0.3f, center = bead)
                     }
 
-                    // Brand glyph core: a small solid gold dot at the very centre (RecoveryRing
-                    // only) with a soft halo, so the open ring + core reads as the NOOP mark. Kept
-                    // small (≈0.4× stroke) so it anchors the read-out without crowding the number.
-                    if (coreDot != null) {
+                    // Brand glyph core: a small solid gold dot at the very centre — but ONLY in the
+                    // glyph-only lock-up (logo / nav). When a number is shown the dot sits behind the
+                    // digits and muddies them (community feedback at the v3 launch), so suppress it
+                    // whenever showsLabel — leaving a clean ring + number + micro-NOOP wordmark.
+                    if (coreDot != null && !showsLabel) {
                         drawCircle(color = coreDot, radius = stroke * 0.40f, center = center)
                     }
                 },
