@@ -8,6 +8,20 @@ import StrandDesign
 struct RootTabView: View {
     @EnvironmentObject private var repo: Repository
 
+    init() {
+        // Plain Titanium bar: pin the background to `surfaceBase` and clear the system
+        // selection-indicator tint so there is NO gold/accent pill behind the selected
+        // icon — the gold `.tint` below colours only the selected icon + label, nothing
+        // is filled behind it. (UIKit derives a selection-indicator fill from the tint
+        // unless it's explicitly cleared.)
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(StrandPalette.surfaceBase)
+        appearance.selectionIndicatorTintColor = .clear
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
+
     var body: some View {
         TabView {
             tab(TodayView(), "Today", "circle.hexagongrid.fill")

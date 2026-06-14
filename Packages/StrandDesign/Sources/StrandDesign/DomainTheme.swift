@@ -107,10 +107,11 @@ public struct ScenicHeroBackground: View {
                 endRadius: 520
             )
 
-            // A soft domain-tinted bloom near the top, if a world is named.
+            // A subtle domain-tinted bloom near the top, if a world is named. Kept minimal
+            // (≈⅓ the old opacity) so the hero reads as a clean field, not a gold wash.
             if let domain {
                 RadialGradient(
-                    gradient: Gradient(colors: [domain.glow.opacity(0.18), .clear]),
+                    gradient: Gradient(colors: [domain.glow.opacity(0.06), .clear]),
                     center: .init(x: 0.5, y: 0.30),
                     startRadius: 0,
                     endRadius: 320

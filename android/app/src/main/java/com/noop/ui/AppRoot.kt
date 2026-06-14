@@ -438,7 +438,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
 private fun navBarItemColors() = NavigationBarItemDefaults.colors(
     selectedIconColor = Palette.accent,
     selectedTextColor = Palette.textPrimary,
-    indicatorColor = Palette.accentMuted,
+    indicatorColor = androidx.compose.ui.graphics.Color.Transparent, // no gold pill behind the selected tab — just the gold icon
+
     unselectedIconColor = Palette.textSecondary,
     unselectedTextColor = Palette.textSecondary,
 )

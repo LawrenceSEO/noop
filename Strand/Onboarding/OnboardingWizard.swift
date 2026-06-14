@@ -105,15 +105,16 @@ public struct OnboardingWizard: View {
     private var background: some View {
         ZStack {
             StrandPalette.surfaceBase
-            // A slow ambient bloom that breathes — the substrate feels alive.
+            // A slow ambient bloom that breathes — the substrate feels alive. Kept subtle
+            // (≈⅓ the old gold opacity) so it's a minimal gold hint, not a wash.
             RadialGradient(
-                colors: [StrandPalette.glowAmbient.opacity(0.55), .clear],
+                colors: [StrandPalette.glowAmbient.opacity(0.18), .clear],
                 center: .center,
                 startRadius: 40,
                 endRadius: glow ? 620 : 480
             )
             .blendMode(.plusLighter)
-            .opacity(glow ? 0.9 : 0.6)
+            .opacity(glow ? 0.4 : 0.28)
             .animation(StrandMotion.breathe(reduced: reduceMotion), value: glow)
             .ignoresSafeArea()
 

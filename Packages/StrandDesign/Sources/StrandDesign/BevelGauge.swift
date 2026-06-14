@@ -7,8 +7,8 @@ import SwiftUI
 //   • a faint full-span track ring carved from `surfaceInset` (the Titanium "well")
 //   • a gradient-stroked progress arc (AngularGradient over the domain ramp:
 //     Charge=gold, Effort=amber, Rest=blue, Stress=blue→gold→orange — caller-supplied)
-//   • a soft outer BLOOM whose intensity scales with the fill
-//   • a GLOWING end-cap dot at the arc tip (white core + coloured halo)
+//   • a faint, static outer bloom whose intensity scales with the fill (calm, not glowing)
+//   • a clean end-cap dot at the arc tip (small white core, very faint shadow)
 //   • a centred SF Pro **Rounded** bold number with an "of N" caption + state word
 //
 // It owns no domain logic — callers pass the fraction, the stroke gradient, the tip
@@ -68,14 +68,14 @@ public struct BevelGauge: View {
         self.bloomActive = bloomActive
     }
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private let arcSpanDegrees: Double = 240
     private var startAngle: Angle { .degrees(150) }
     private var endAngle: Angle { .degrees(150 + arcSpanDegrees) }
 
-    private var bloomOpacity: Double { 0.16 + 0.40 * fraction }
-    private var bloomRadius: CGFloat { lineWidth * (0.9 + 1.4 * fraction) }
+    // Material-style restraint: a faint, static bloom (≈⅓ the old opacity, ≈½ the old
+    // blur) so the arc reads as a clean flat ring rather than a skeuomorphic glow.
+    private var bloomOpacity: Double { 0.05 + 0.13 * fraction }
+    private var bloomRadius: CGFloat { lineWidth * (0.45 + 0.7 * fraction) }
 
     private var gradient: Gradient { Gradient(stops: stops) }
 
@@ -103,16 +103,17 @@ public struct BevelGauge: View {
 
     private var ring: some View {
         ZStack {
-            // Outer bloom — blurred copy of the filled arc, intensity scales with fill.
+            // Outer bloom — a faint, STATIC blurred copy of the filled arc. No breathing
+            // pulse: it sits calm so the ring reads flat/Material, not glowing. `bloomActive`
+            // is kept in the signature but no longer drives an animation here.
             arcShape(to: animatedFraction)
                 .stroke(
                     AngularGradient(gradient: gradient, center: .center,
                                     startAngle: startAngle, endAngle: endAngle),
-                    style: StrokeStyle(lineWidth: lineWidth * 1.05, lineCap: .round)
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .blur(radius: bloomRadius)
-                .opacity(bloomOpacity * (bloomActive ? 1.0 : 0.78))
-                .animation(StrandMotion.breathe(reduced: reduceMotion), value: bloomActive)
+                .opacity(bloomOpacity)
                 .blendMode(.plusLighter)
 
             // Faint full-span track — the inset "well" the gold/amber/blue arc sits in.
@@ -128,7 +129,7 @@ public struct BevelGauge: View {
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
 
-            // Glowing end-cap dot at the arc tip.
+            // Clean end-cap dot at the arc tip.
             if animatedFraction > 0.001 { endCap }
         }
     }
@@ -140,16 +141,13 @@ public struct BevelGauge: View {
             let tipAngle = startAngle.radians + (arcSpanDegrees * .pi / 180) * animatedFraction
             let pt = CGPoint(x: center.x + radius * cos(tipAngle),
                              y: center.y + radius * sin(tipAngle))
-            ZStack {
-                Circle().fill(tipColor)
-                    .frame(width: lineWidth * 2.6, height: lineWidth * 2.6)
-                    .blur(radius: lineWidth * 0.95).opacity(0.75).blendMode(.plusLighter)
-                Circle().fill(Color.white)
-                    .frame(width: lineWidth * 0.66, height: lineWidth * 0.66)
-                    .overlay(Circle().fill(tipColor).opacity(0.35))
-                    .shadow(color: tipColor.opacity(0.8), radius: lineWidth * 0.4)
-            }
-            .position(pt)
+            // Clean Material tip: a single small solid dot at the arc end. The large
+            // blurred halo is gone; only a very faint shadow keeps it from looking pasted on.
+            Circle().fill(Color.white)
+                .frame(width: lineWidth * 0.7, height: lineWidth * 0.7)
+                .overlay(Circle().fill(tipColor).opacity(0.35))
+                .shadow(color: tipColor.opacity(0.35), radius: lineWidth * 0.18)
+                .position(pt)
         }
     }
 

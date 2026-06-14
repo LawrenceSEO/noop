@@ -627,8 +627,8 @@ fun BevelGauge(
                             useCenter = false,
                             topLeft = topLeft,
                             size = arcSize,
-                            style = Stroke(width = stroke * 1.7f, cap = StrokeCap.Round),
-                            alpha = bloomOpacity,
+                            style = Stroke(width = stroke * 1.15f, cap = StrokeCap.Round),
+                            alpha = bloomOpacity * 0.4f,
                         )
                     }
 
@@ -655,22 +655,20 @@ fun BevelGauge(
                             style = sweepStroke,
                         )
 
-                        // Glowing end-cap dot at the arc tip: coloured halo + white core.
+                        // Clean Material end-cap: a small solid coloured dot + white core, no soft halo.
                         val tipAngle = Math.toRadians((startDeg + spanDeg * animatedFraction).toDouble())
                         val bead = Offset(
                             center.x + radius * cos(tipAngle).toFloat(),
                             center.y + radius * sin(tipAngle).toFloat(),
                         )
-                        drawCircle(color = tipColor.copy(alpha = 0.35f), radius = stroke * 1.3f, center = bead)
-                        drawCircle(color = tipColor.copy(alpha = 0.7f), radius = stroke * 0.85f, center = bead)
-                        drawCircle(color = Color.White, radius = stroke * 0.33f, center = bead)
+                        drawCircle(color = tipColor, radius = stroke * 0.7f, center = bead)
+                        drawCircle(color = Color.White, radius = stroke * 0.3f, center = bead)
                     }
 
                     // Brand glyph core: a small solid gold dot at the very centre (RecoveryRing
                     // only) with a soft halo, so the open ring + core reads as the NOOP mark. Kept
                     // small (≈0.4× stroke) so it anchors the read-out without crowding the number.
                     if (coreDot != null) {
-                        drawCircle(color = coreDot.copy(alpha = 0.18f), radius = stroke * 0.85f, center = center)
                         drawCircle(color = coreDot, radius = stroke * 0.40f, center = center)
                     }
                 },
@@ -839,7 +837,7 @@ fun ScenicHeroBackground(
             if (domain != null) {
                 drawRect(
                     brush = Brush.radialGradient(
-                        colors = listOf(domain.glow.copy(alpha = 0.18f), Color.Transparent),
+                        colors = listOf(domain.glow.copy(alpha = 0.06f), Color.Transparent),
                         center = Offset(w * 0.5f, h * 0.30f),
                         radius = maxOf(w, h) * 0.6f,
                     ),
