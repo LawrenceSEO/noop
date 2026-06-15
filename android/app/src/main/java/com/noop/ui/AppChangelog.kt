@@ -37,6 +37,14 @@ object AppChangelog {
     /** Newest first. */
     val releases: List<Release> = listOf(
         Release(
+            version = "4.2.1",
+            title = "Optional inactivity nudge",
+            date = "June 2026",
+            items = listOf(
+                "A gentle move reminder, if you want one. Turn it on in Settings → Automations and NOOP buzzes your strap after you've been sitting still too long (your threshold, default 45 min), within hours you choose (default 9–5), with a cooldown you set. Off by default, runs from the motion already on your strap, and respects quiet hours and only-when-worn. Thanks @cbarrado (#419).",
+            ),
+        ),
+        Release(
             version = "4.2.0",
             title = "Open a workout, see what it costs you, and share your trends",
             date = "June 2026",

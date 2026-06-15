@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "4.2.0"
+    static let currentVersion = "4.2.1"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "4.2.1",
+            title: "Optional inactivity nudge",
+            date: "June 2026",
+            items: [
+                "**A gentle move reminder, if you want one.** Turn it on in Settings → Automations and NOOP will buzz your strap after you've been sitting still too long (your threshold, default 45 min), within hours you choose (default 9–5), with a re-nudge cooldown you set. It's **off by default**, runs entirely from the motion already on your strap, and respects your quiet hours and only-when-worn settings. Thanks @cbarrado (#419).",
+            ]),
         Release(
             version: "4.2.0",
             title: "Open a workout, see what it costs you, and share your trends",

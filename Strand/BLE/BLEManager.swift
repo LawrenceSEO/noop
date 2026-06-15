@@ -2,6 +2,7 @@ import Foundation
 import CoreBluetooth
 import WhoopProtocol
 import WhoopStore
+import StrandAnalytics
 
 /// Detects a marginal Bluetooth radio that can't sustain the WHOOP 4 R10/R11 raw realtime stream
 /// (#80). On a flaky radio (2016 Mac / OpenCore) the link dies the *instant* NOOP arms that
@@ -192,6 +193,10 @@ public final class BLEManager: NSObject, ObservableObject {
     /// Window after the last offload frame/HISTORY_COMPLETE during which a type-0x2F frame is treated
     /// as trailing-historical, not live. ~10 s comfortably covers the post-completion drain lull.
     static let deepPacketLiveCooldownSeconds: TimeInterval = 10
+    /// How far back the inactivity reminder (#419) reads gravity on each offload completion (4 h
+    /// comfortably spans the threshold + re-nudge cadence and a separating Active break for bout
+    /// continuity). Mirrors the Android WhoopBleClient.INACTIVITY_LOOKBACK_S.
+    static let inactivityLookbackSeconds = 4 * 3600
     /// Safety-net detector: strap reports newer data than us AND our frontier frozen 10 min ⇒ flag for
     /// reboot. behindGapSeconds avoids false positives when off-wrist / caught up. Insurance only.
     private var stuckDetector = StuckStrapDetector(stuckAfterSeconds: 600, behindGapSeconds: 300)
@@ -980,6 +985,9 @@ public final class BLEManager: NSObject, ObservableObject {
         backfillTimeout = nil
         backfillFrameQueue.removeAll()
         log("Backfill: session ended — reason=\(reason)")
+        // Inactivity reminder (#419): read-only hook on the natural offload completion (no cadence
+        // change). Only on a true HISTORY_COMPLETE — a timeout/disconnect didn't bring a fresh window.
+        if reason == "HISTORY_COMPLETE" { maybeBuzzInactivity() }
         // Success-side summary (#150 forensics): we logged failures (decoded-to-0) but never successes,
         // so a strap log couldn't tell a banking strap from a broken one. Emit the per-session persistence
         // tally whenever anything actually landed — the win-rate signal a log previously lacked.
@@ -1662,6 +1670,46 @@ public final class BLEManager: NSObject, ObservableObject {
         }
         send(.runAlarm, payload: [0x01])
         log("Alarm: test buzz fired (patternId=2, runAlarm)")
+    }
+
+    /// Inactivity reminder (#419): on each natural offload completion, run the shipped, unit-tested
+    /// `SedentaryDetector` over the freshly-arrived gravity window and buzz the wrist if the user has
+    /// been seated too long. NO offload-timer change — a read-only hook on an event that already
+    /// happens, so the nudge lags the stillness by the offload cadence (~7-15 min). Best-effort.
+    ///
+    /// All gating + de-dup lives in the engine: we only supply honest inputs (recent gravity, the live
+    /// `state.worn` flag, the prefs→`SedentaryConfig`/`SedentaryState`) and persist the engine's
+    /// `nextState`. The engine acts only when this offload advanced the newest gravity ts (a replayed /
+    /// no-new-rows sync can't re-buzz), only for a bout whose end is still current, only through its
+    /// mayBuzz gate (master / quiet hours / worn / active-hours-by-bout-end-time), and either re-nudges a
+    /// continuing bout on the user's cadence or alerts a distinct new bout separated by movement.
+    ///
+    /// Mirrors the async pattern of checkStrapLiveness: the gravity read only the Collector can do (it
+    /// owns the concrete store) hops onto a @MainActor Task, then the gated buzz + state save run back on
+    /// the main actor. Haptic firing can't be verified in the simulator — test on-device.
+    private func maybeBuzzInactivity() {
+        guard InactivityPrefs.isEnabled() else { return }   // cheap pre-check before any DB read
+        Task { @MainActor in
+            let nowSec = Int(Date().timeIntervalSince1970)
+            let from = nowSec - BLEManager.inactivityLookbackSeconds
+            let gravity = await collector?.recentGravity(from: from, to: nowSec) ?? []
+            guard !gravity.isEmpty else { return }
+
+            let decision = SedentaryDetector.evaluate(
+                gravity, state: InactivityPrefs.loadState(),
+                config: InactivityPrefs.loadConfig(),
+                worn: state.worn, nowSec: nowSec,
+                tzOffsetSec: InactivityPrefs.tzOffsetSec(nowSec))
+            // The engine always advances lastProcessedGravityTs when a window arrived, so persist the
+            // de-dup state every run — a replayed window then can't re-buzz across a relaunch.
+            InactivityPrefs.saveState(decision.nextState)
+
+            if decision.shouldBuzz {
+                send(.runHapticsPattern, payload: [2, UInt8(clamping: decision.buzzLoops), 0, 0, 0])
+                let mins = Int((decision.bout?.durationS ?? 0) / 60)
+                log("Inactivity: nudged after a \(mins)-min sedentary stretch.")
+            }
+        }
     }
 
     /// Parse a standard BLE Heart Rate Measurement (0x2A37) via the pure StandardHeartRate parser.

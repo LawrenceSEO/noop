@@ -96,6 +96,15 @@ final class Collector {
         return try? await s.latestHRSampleTs(deviceId: deviceId)
     }
 
+    /// Recent gravity samples for the inactivity reminder (#419): the strap's motion over `[from, to]`,
+    /// the input to the shipped `SedentaryDetector`. Empty if there's no concrete store or the read
+    /// throws. Mirrors latestHRSampleTs() — the BLE offload hook reads gravity through the Collector
+    /// because the Collector owns the concrete store.
+    func recentGravity(from: Int, to: Int, limit: Int = 100_000) async -> [GravitySample] {
+        guard let s = concreteStore else { return [] }
+        return (try? await s.gravitySamples(deviceId: deviceId, from: from, to: to, limit: limit)) ?? []
+    }
+
     /// Apply the raw-retention policy. Returns rows pruned (0 if no concrete store).
     @discardableResult
     func prune() async -> Int {

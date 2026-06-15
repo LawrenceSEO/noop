@@ -17,6 +17,10 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 4.2.1 — Optional inactivity nudge
+
+- An opt-in move reminder: NOOP can buzz your strap after you've been sitting still too long (your threshold, default 45 min), within active hours you choose, with a re-nudge cooldown. Off by default, runs from the motion already on your strap, respects quiet hours and only-when-worn. Settings → Automations. Thanks @cbarrado (#419).
+
 ## 4.2.0 — Open a workout, see what it costs you, and share your trends
 
 - Tap any workout to open a full detail view — HR curve over the session, time in each HR zone, duration, avg/max HR, and the Effort it added (#410).

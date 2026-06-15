@@ -40,8 +40,10 @@ import com.noop.protocol.Streams
 import com.noop.protocol.Whoop5Config
 import com.noop.protocol.extractStreams
 import com.noop.analytics.IntelligenceEngine
+import com.noop.analytics.SedentaryDetector
 import com.noop.analytics.UserProfile
 import com.noop.ingest.HealthConnectWriter
+import com.noop.ui.InactivityPrefs
 import com.noop.ui.NoopPrefs
 import com.noop.ui.ProfileStore
 import kotlinx.coroutines.CoroutineScope
@@ -378,6 +380,9 @@ class WhoopBleClient(
         // MARK: Historical-offload timers (ported from BLEManager.swift, same constants).
         /** Periodic re-offload of the type-47 store while connected+bonded. 900s = 15 min (matches WHOOP). */
         private const val BACKFILL_INTERVAL_MS = 900_000L
+        /** How far back the inactivity check reads gravity on each offload completion (4 h comfortably
+         *  spans the threshold + re-nudge cadence and a separating Active break for bout continuity). */
+        private const val INACTIVITY_LOOKBACK_S = 4 * 3600L
         /**
          * Idle watchdog: if no genuine offload frame arrives for this long mid-session, end the
          * session (the durable strap_trim cursor means the next session resumes where we left off).
@@ -1422,6 +1427,51 @@ class WhoopBleClient(
         val n = loops.coerceIn(0, 255)
         send(CommandNumber.RUN_HAPTICS_PATTERN, byteArrayOf(2, n.toByte(), 0, 0, 0))
         log("Buzz: patternId=2 loops=$n")
+    }
+
+    /**
+     * Inactivity reminder (#419): on each natural offload completion, run the shipped, unit-tested
+     * [SedentaryDetector] over the freshly-arrived gravity window and buzz the wrist if the user has
+     * been seated too long. NO offload-timer change — a read-only hook on an event that already happens,
+     * so the nudge lags the stillness by the offload cadence (~7-15 min). Best-effort.
+     *
+     * All gating + de-dup lives in the engine: we only supply honest inputs (recent gravity, the live
+     * worn flag, the prefs→[SedentaryConfig]/[SedentaryState]) and persist the engine's `nextState`. The
+     * engine acts only when this offload advanced the newest gravity ts (a replayed / no-new-rows sync
+     * can't re-buzz), only for a bout whose end is still current, only through its mayBuzz gate (master /
+     * quiet hours / worn / active-hours-by-bout-end-time), and either re-nudges a continuing bout on the
+     * user's cadence or alerts a distinct new bout separated by movement.
+     */
+    private fun maybeBuzzInactivity() {
+        if (!InactivityPrefs.enabled(context)) return
+        ioScope.launch {
+            try {
+                val nowSec = System.currentTimeMillis() / 1000L
+                val from = nowSec - INACTIVITY_LOOKBACK_S
+                val grav = repository.gravitySamples(deviceId, from, nowSec)
+                if (grav.isEmpty()) return@launch
+
+                val decision = SedentaryDetector.evaluate(
+                    gravity = grav,
+                    state = InactivityPrefs.state(context),
+                    config = InactivityPrefs.config(context),
+                    worn = _state.value.worn,
+                    nowSec = nowSec,
+                    tzOffsetSec = InactivityPrefs.tzOffsetSec(nowSec),
+                )
+                // Persist the advanced de-dup state every run (the engine always advances
+                // lastProcessedGravityTs when a window arrived), so a replayed window can't re-buzz.
+                InactivityPrefs.saveState(context, decision.nextState)
+
+                if (decision.shouldBuzz) {
+                    handler.post { buzz(decision.buzzLoops) }
+                    val mins = ((decision.bout?.durationS ?: 0.0) / 60).toInt()
+                    log("Inactivity: nudged after a $mins-min sedentary stretch.")
+                }
+            } catch (t: Throwable) {
+                log("Inactivity: check failed (${t.message})")
+            }
+        }
     }
 
     /**
@@ -3073,6 +3123,9 @@ class WhoopBleClient(
         backfillFrameQueue.clear()
         closeWhoop5BackfillCapture(flushSummary = true)
         log("Backfill: session ended — reason=$reason")
+        // Inactivity reminder (#419): read-only hook on the natural offload completion (no cadence
+        // change). Only on a true HISTORY_COMPLETE — a timeout/disconnect didn't bring a fresh window.
+        if (reason == "HISTORY_COMPLETE") maybeBuzzInactivity()
         // Success-side summary (#150 forensics): we logged failures (decoded-to-0) but never successes,
         // so a strap log couldn't tell a banking strap from a broken one. Emit the per-session persistence
         // tally whenever anything actually landed — the win-rate signal a log previously lacked. Mirrors

@@ -7,6 +7,10 @@ struct AutomationsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var behavior: BehaviorStore
     @EnvironmentObject var live: LiveState
+    /// Inactivity reminder (#419) — UI-local store, persisted in UserDefaults. The buzz itself fires
+    /// from the BLE offload path (BLEManager.maybeBuzzInactivity → the shipped SedentaryDetector); this
+    /// screen only edits the prefs the engine reads.
+    @StateObject private var inactivity = InactivityPrefs()
 
     var body: some View {
         ScreenScaffold(title: "Automations",
@@ -15,6 +19,7 @@ struct AutomationsView: View {
             wearCard
             coachingCard
             alarmCard
+            inactivityCard
             illnessCard
             batteryCard
         }
@@ -155,6 +160,100 @@ struct AutomationsView: View {
             .onChangeCompat(of: behavior.smartAlarmEnabled) { _ in model.applySmartAlarm() }
             .onChangeCompat(of: behavior.smartAlarmMinutes) { _ in model.applySmartAlarm() }
         }
+    }
+
+    // MARK: - Inactivity reminder (#419)
+
+    private var inactivityCard: some View {
+        Section2(icon: "timer", title: "Inactivity reminder",
+                 blurb: "A gentle wrist buzz when you've been sitting too long — a nudge to get up and move. Inferred from the strap's motion on each history sync, so it lags real time by a sync or two.",
+                 active: inactivity.enabled) {
+            VStack(spacing: 0) {
+                ToggleRow(label: "Enable inactivity reminder",
+                          help: "Buzzes after you've been sitting past your threshold.",
+                          isOn: $inactivity.enabled)
+                if inactivity.enabled {
+                    if !notifMasterOn {
+                        Text("Notifications are off, so this can't buzz yet — turn on the master switch in Notifications to let it through.")
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.statusWarning)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 6)
+                    }
+                    rowDivider
+                    stepperRow(label: "Sitting for", help: "Minutes seated before the first nudge.",
+                               value: $inactivity.thresholdMinutes, suffix: "min", range: 15...120, step: 15)
+                    rowDivider
+                    stepperRow(label: "Re-nudge every", help: "If you're still seated, buzz again this often.",
+                               value: $inactivity.reNudgeMinutes, suffix: "min", range: 15...120, step: 15)
+                    rowDivider
+                    stepperRow(label: "Buzz strength", help: "How strong the buzz is.",
+                               value: $inactivity.buzzLoops, suffix: "×", range: 1...4, step: 1)
+                    rowDivider
+                    // Reuses the shared notification only-when-worn gate (notif.onlyWhenWorn).
+                    ToggleRow(label: "Only when worn",
+                              help: "Don't buzz when the strap is off your wrist.",
+                              isOn: onlyWhenWornBinding)
+                    rowDivider
+                    ToggleRow(label: "Only during active hours",
+                              help: "Only nudge during your active hours.",
+                              isOn: $inactivity.activeHoursEnabled)
+                    if inactivity.activeHoursEnabled {
+                        rowDivider
+                        HStack(spacing: 12) {
+                            Text("From").font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                            DatePicker("", selection: activeStartBinding, displayedComponents: .hourAndMinute)
+                                .labelsHidden().datePickerStyle(.compact)
+                                .accessibilityLabel("Active hours start")
+                            Text("to").font(StrandFont.body).foregroundStyle(StrandPalette.textSecondary)
+                            DatePicker("", selection: activeEndBinding, displayedComponents: .hourAndMinute)
+                                .labelsHidden().datePickerStyle(.compact)
+                                .accessibilityLabel("Active hours end")
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: 42).padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The reused global notification master (notif.masterEnabled, default OFF) — drives the inert-feature
+    /// warning so enabling the reminder while master is off isn't silently a no-op.
+    private var notifMasterOn: Bool {
+        UserDefaults.standard.object(forKey: "notif.masterEnabled") as? Bool ?? false
+    }
+    /// The reused only-when-worn gate (notif.onlyWhenWorn, default ON) — the SAME key the notifications
+    /// screen and the engine read, so the two screens stay in sync.
+    private var onlyWhenWornBinding: Binding<Bool> {
+        Binding(get: { UserDefaults.standard.object(forKey: "notif.onlyWhenWorn") as? Bool ?? true },
+                set: { UserDefaults.standard.set($0, forKey: "notif.onlyWhenWorn") })
+    }
+    private var activeStartBinding: Binding<Date> {
+        Binding(get: { Self.date(fromMinutes: inactivity.activeStartMinutes) },
+                set: { inactivity.activeStartMinutes = Self.minutes(from: $0) })
+    }
+    private var activeEndBinding: Binding<Date> {
+        Binding(get: { Self.date(fromMinutes: inactivity.activeEndMinutes) },
+                set: { inactivity.activeEndMinutes = Self.minutes(from: $0) })
+    }
+
+    /// A label/help row with a native −[value]+ stepper, clamped to `range` and moved by `step`.
+    private func stepperRow(label: String, help: String, value: Binding<Int>,
+                            suffix: String, range: ClosedRange<Int>, step: Int) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(StrandFont.body).foregroundStyle(StrandPalette.textPrimary)
+                Text(help).font(StrandFont.footnote).foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Text("\(value.wrappedValue) \(suffix)")
+                .font(StrandFont.bodyNumber).foregroundStyle(StrandPalette.textPrimary)
+            Stepper("", value: value, in: range, step: step).labelsHidden()
+                .accessibilityLabel(label)
+        }
+        .frame(minHeight: 42).padding(.vertical, 4)
     }
 
     // MARK: - Illness early-warning

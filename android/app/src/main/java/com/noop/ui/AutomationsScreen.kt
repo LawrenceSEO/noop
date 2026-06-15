@@ -1,6 +1,7 @@
 package com.noop.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,12 +10,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -27,8 +34,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.analytics.HrZones
@@ -70,6 +79,22 @@ fun AutomationsScreen(viewModel: AppViewModel) {
     val zone5Bpm = remember(profile.hrMax) {
         HrZones.zones(maxHR = profile.hrMax.toDouble()).zones.firstOrNull { it.number == 5 }?.lower?.roundToInt() ?: 0
     }
+
+    // Inactivity reminder (#419) — real + persisted via InactivityPrefs (opt-in, default OFF). Seeded
+    // once, written through on change (SharedPreferences isn't reactive). The buzz itself fires from the
+    // BLE offload path (WhoopBleClient.maybeBuzzInactivity → the shipped SedentaryDetector engine); this
+    // screen only edits the prefs the engine reads.
+    var inactivityEnabled by remember { mutableStateOf(InactivityPrefs.enabled(ctx)) }
+    var inactivityThreshold by remember { mutableStateOf(InactivityPrefs.thresholdMinutes(ctx)) }
+    var inactivityReNudge by remember { mutableStateOf(InactivityPrefs.reNudgeMinutes(ctx)) }
+    var inactivityBuzzLoops by remember { mutableStateOf(InactivityPrefs.buzzLoops(ctx)) }
+    var inactivityActiveHours by remember { mutableStateOf(InactivityPrefs.activeHoursEnabled(ctx)) }
+    var inactivityActiveStart by remember { mutableStateOf(InactivityPrefs.activeStartMinutes(ctx)) }
+    var inactivityActiveEnd by remember { mutableStateOf(InactivityPrefs.activeEndMinutes(ctx)) }
+    var inactivityOnlyWorn by remember { mutableStateOf(NotifPrefs.getBool(ctx, NotifPrefs.WORN, true)) }
+    // The engine also requires the global notification master (default OFF); surface that dependency so
+    // enabling the reminder while master is off isn't silently inert.
+    val notifMasterOn = NotifPrefs.getBool(ctx, NotifPrefs.MASTER, false)
 
     ScreenScaffold(
         title = "Automations",
@@ -187,6 +212,111 @@ fun AutomationsScreen(viewModel: AppViewModel) {
             }
         }
 
+        // Inactivity reminder (#419) — real + persisted via InactivityPrefs; opt-in, default OFF.
+        SettingsSection(
+            icon = Icons.Filled.Timer,
+            title = "Inactivity reminder",
+            blurb = "A gentle wrist buzz when you've been sitting too long — a nudge to get up and move. Inferred from the strap's motion on each history sync, so it lags real time by a sync or two.",
+            active = inactivityEnabled,
+        ) {
+            ToggleRow(
+                label = "Enable inactivity reminder",
+                help = "Buzzes after you've been sitting past your threshold.",
+                checked = inactivityEnabled,
+                onChange = {
+                    inactivityEnabled = it
+                    InactivityPrefs.setBool(ctx, InactivityPrefs.ENABLED, it)
+                },
+            )
+            if (inactivityEnabled) {
+                if (!notifMasterOn) {
+                    RowDivider()
+                    Text(
+                        "Notifications are off, so this can't buzz yet — turn on the master switch in " +
+                            "Settings → Notifications to let it through.",
+                        style = NoopType.footnote, color = Palette.statusWarning,
+                    )
+                }
+                RowDivider()
+                StepperRow(
+                    label = "Sitting for",
+                    help = "Minutes seated before the first nudge.",
+                    value = inactivityThreshold, suffix = "min", range = 15..120, step = 15,
+                    onChange = {
+                        inactivityThreshold = it
+                        InactivityPrefs.setInt(ctx, InactivityPrefs.THRESHOLD_MIN, it)
+                    },
+                )
+                RowDivider()
+                StepperRow(
+                    label = "Re-nudge every",
+                    help = "If you're still seated, buzz again this often.",
+                    value = inactivityReNudge, suffix = "min", range = 15..120, step = 15,
+                    onChange = {
+                        inactivityReNudge = it
+                        InactivityPrefs.setInt(ctx, InactivityPrefs.RENUDGE_MIN, it)
+                    },
+                )
+                RowDivider()
+                StepperRow(
+                    label = "Buzz strength",
+                    help = "How strong the buzz is.",
+                    value = inactivityBuzzLoops, suffix = "×", range = 1..4, step = 1,
+                    onChange = {
+                        inactivityBuzzLoops = it
+                        InactivityPrefs.setInt(ctx, InactivityPrefs.BUZZ_LOOPS, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    label = "Only when worn",
+                    help = "Don't buzz when the strap is off your wrist.",
+                    checked = inactivityOnlyWorn,
+                    onChange = {
+                        inactivityOnlyWorn = it
+                        // Reuses the shared notification only-when-worn gate (NotifPrefs.WORN).
+                        NotifPrefs.setBool(ctx, NotifPrefs.WORN, it)
+                    },
+                )
+                RowDivider()
+                ToggleRow(
+                    label = "Only during active hours",
+                    help = "Only nudge during your active hours.",
+                    checked = inactivityActiveHours,
+                    onChange = {
+                        inactivityActiveHours = it
+                        InactivityPrefs.setBool(ctx, InactivityPrefs.ACTIVE_HOURS_ENABLED, it)
+                    },
+                )
+                if (inactivityActiveHours) {
+                    RowDivider()
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("From", style = NoopType.body, color = Palette.textPrimary)
+                        Spacer(Modifier.weight(1f))
+                        TimeChip(
+                            minutes = inactivityActiveStart,
+                            accessibilityLabel = "Active hours start",
+                            onPicked = {
+                                inactivityActiveStart = it
+                                InactivityPrefs.setInt(ctx, InactivityPrefs.ACTIVE_START_MIN, it)
+                            },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("to", style = NoopType.body, color = Palette.textSecondary)
+                        Spacer(Modifier.width(8.dp))
+                        TimeChip(
+                            minutes = inactivityActiveEnd,
+                            accessibilityLabel = "Active hours end",
+                            onPicked = {
+                                inactivityActiveEnd = it
+                                InactivityPrefs.setInt(ctx, InactivityPrefs.ACTIVE_END_MIN, it)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
         // Illness early-warning (real + persisted; opt-OUT — the watch has always run on Android).
         SettingsSection(
             icon = Icons.Filled.MonitorHeart,
@@ -288,4 +418,55 @@ private fun RowDivider() {
             .padding(vertical = 4.dp)
             .background(Palette.hairline),
     )
+}
+
+/** A label/help row with a −[value]+ stepper, clamped to [range] and moved by [step]. */
+@Composable
+private fun StepperRow(
+    label: String,
+    help: String,
+    value: Int,
+    suffix: String,
+    range: IntRange,
+    step: Int,
+    onChange: (Int) -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = NoopType.body, color = Palette.textPrimary)
+            Text(help, style = NoopType.footnote, color = Palette.textTertiary)
+        }
+        Spacer(Modifier.width(12.dp))
+        StepButton(Icons.Filled.Remove, "Decrease $label", enabled = value > range.first) {
+            onChange((value - step).coerceAtLeast(range.first))
+        }
+        Text(
+            "$value $suffix",
+            style = NoopType.body,
+            color = Palette.textPrimary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp).widthIn(min = 56.dp),
+        )
+        StepButton(Icons.Filled.Add, "Increase $label", enabled = value < range.last) {
+            onChange((value + step).coerceAtMost(range.last))
+        }
+    }
+}
+
+@Composable
+private fun StepButton(icon: ImageVector, contentDescription: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Palette.surfaceInset)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) Palette.accent else Palette.textTertiary,
+        )
+    }
 }
