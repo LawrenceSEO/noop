@@ -2,6 +2,7 @@ package com.noop.ble
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -40,5 +41,30 @@ class PiiRedactionTest {
             redactStrapLogPii("Auto-reconnecting to your saved WHOOP 4.0…"))
         assertEquals("Backfill: session ended — reason=HISTORY_COMPLETE",
             redactStrapLogPii("Backfill: session ended — reason=HISTORY_COMPLETE"))
+    }
+
+    /**
+     * Regression for #453: a WHOOP 5/MG reconnect logs a frame line containing a MAC; redaction must
+     * mask it WITHOUT throwing. The $3 bug here crashed the whole app on every Bluetooth-on reconnect.
+     */
+    @Test fun frameLineWithMacIsRedactedNotCrashed() {
+        val out = redactStrapLogPii("handleFrame from AA:BB:CC:DD:EE:FF — 24 bytes")
+        assertEquals("handleFrame from AA:••:••:••:••:FF — 24 bytes", out)
+    }
+
+    /** Defense-in-depth (#453): redaction is TOTAL — it never throws, on any input, ever. */
+    @Test fun neverThrowsOnAdversarialInput() {
+        val nasty = listOf(
+            "", "no pii here",
+            "literal dollar \$3 and \${0} and \\1 in the text",
+            "AA:BB:CC:DD:EE:FF WHOOP 4C1594026 mixed $ \\ ${'$'}{",
+            "x".repeat(20000),
+            "00:11:22:33:44:55 ".repeat(500),
+        )
+        for (s in nasty) {
+            // The contract is "returns a String, never throws" — assert it completes for every input.
+            val out = redactStrapLogPii(s)
+            assertTrue("must return a value, got null", out.isNotEmpty() || s.isEmpty())
+        }
     }
 }

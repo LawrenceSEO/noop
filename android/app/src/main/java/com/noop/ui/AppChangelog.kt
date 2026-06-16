@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "4.2.11"
+    const val CURRENT_VERSION = "4.2.12"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "4.2.12",
+            title = "Fix: app crashing / won't open when Bluetooth is on",
+            date = "June 2026",
+            items = listOf(
+                "**Fixed NOOP crashing — or refusing to open at all — whenever Bluetooth was on.** This hit some phones hard, notably WHOOP 5.0 / MG on Android 16. When Bluetooth came on, NOOP's background service reconnected to your saved strap and logged the first frame it received; a bug in the privacy log-redaction code (it masks Bluetooth addresses) threw an error on that line and crashed the **entire app — even while it was closed**, and earlier builds had it too, so downgrading didn't help. Two fixes: the redaction bug is gone, and the **logging path is now hardened so a diagnostic line can never crash the app again** (with a regression test). Your data and history were never at risk. Huge thanks to @frazzle28 and @pawan0305 for the reports and the crash trace (#453).",
+            ),
+        ),
         Release(
             version = "4.2.11",
             title = "Fix: connecting a Polar H10 or other heart-rate strap",

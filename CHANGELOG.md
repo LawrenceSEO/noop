@@ -17,6 +17,10 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 4.2.12 — Fix: app crashing / won't open when Bluetooth is on (Android)
+
+- **Fixed NOOP crashing — or refusing to open at all — whenever Bluetooth was on**, which hit some phones hard (notably WHOOP 5.0 / MG on Android 16). When Bluetooth came on, NOOP's background service reconnected to your saved strap and logged the first frame it received; a bug in the privacy log-redaction code (it masks Bluetooth addresses) threw an error on that line and **crashed the entire app — even while it was closed**, and the bug was in earlier builds too, so downgrading didn't help. Two fixes: the redaction bug itself is gone, and the **logging path is now hardened so a diagnostic line can never crash the app again** (belt-and-suspenders, with a regression test). Your data and history were never at risk. Huge thanks to **@frazzle28** and **@pawan0305** for the reports and the crash trace (#453). *(Android — macOS/iOS use a different, unaffected redaction path.)*
+
 ## 4.2.11 — Polar H10 & other heart-rate straps connect again (Android fix)
 
 - **Fixed a crash that stopped Polar H10 and other standard Bluetooth heart-rate straps from connecting on Android.** When NOOP went to activate a generic HR strap, an internal log-redaction bug threw an error the instant it wrote the strap's Bluetooth address into the strap log — and that thrown error quietly aborted the connection, so the strap paired but never streamed live data. The strap now connects and streams as intended. **WHOOP straps were never affected** (they only ever log a `<serial>`, never a raw address, so the bug stayed hidden until a generic strap was used). Added a unit test so it can't regress. Thanks **@pilleuspulcher-blip** for the strap log that pinned it (#421). *(Android only — macOS/iOS were never affected; they stay on 4.2.10.)*

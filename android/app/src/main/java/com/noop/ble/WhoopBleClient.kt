@@ -2025,6 +2025,11 @@ class WhoopBleClient(
                 // Reassemble (no-op for already-complete frames) then route each complete frame.
                 // Port of: for frame in reassembler.feed(bytes) { router.handle(frame:) }.
                 for (frame in reassembler.feed(bytes)) {
+                  // #453 defense-in-depth: this loop runs on the GATT binder thread; an uncaught throw
+                  // from ANY frame op (handleFrame, a decoder, the inline date-format, log) would crash
+                  // the whole app — the exact chain the redactPii bug escaped through. Wrap the whole
+                  // body so a bad frame drops ONE frame and the link stays up. (log() is itself total.)
+                  try {
                     noteWhoop5R22Telemetry(frame, backfilling && isOffloadFrame(frame, connectedFamily))  // #174
                     handleFrame(frame)              // UI (always) — port of router.handle(frame:)
 
@@ -2083,6 +2088,9 @@ class WhoopBleClient(
                         // Live path: buffer the frame for a batched decode+insert (port of Collector.ingest).
                         ingestLiveFrame(frame)
                     }
+                  } catch (t: Throwable) {
+                    log("inbound frame handling threw ${t.javaClass.simpleName} — dropping this frame, link stays up")
+                  }
                 }
             }
             else -> { /* ignore */ }
@@ -3565,16 +3573,32 @@ class WhoopBleClient(
     }
 
     private fun log(s: String) {
-        // Scrub personal identifiers FIRST so a user can safely share the strap log (#445).
-        val safe = redactPii(s)
-        // logcat is opt-in (Settings → Strap → "Debug logging"); default OFF so normal users don't
-        // emit the strap log to the system log. The in-app ring buffer below always records.
-        if (debugLogcat) Log.d(TAG, safe)
-        // Mirror into the in-app ring buffer (format under the lock — SimpleDateFormat isn't
-        // thread-safe and log() is called from both the GATT binder thread and the main looper).
-        synchronized(logBuffer) {
-            logBuffer.addLast("${logTimeFmt.format(System.currentTimeMillis())}  $safe")
-            while (logBuffer.size > LOG_BUFFER_MAX) logBuffer.removeFirst()
+        // A diagnostic log line must NEVER be able to crash the app. log() runs on the GATT binder
+        // thread and from the background reconnect service, so an uncaught throw here takes the WHOLE
+        // process down — which is exactly what happened in #453: a redaction-regex bug crashed the
+        // app on every Bluetooth-on reconnect, even when it was closed. Belt-and-suspenders: nothing
+        // in here may propagate. (The regex bug itself is also fixed; this guarantees the class can't
+        // recur.)
+        try {
+            // Scrub personal identifiers FIRST so a user can safely share the strap log (#445).
+            val safe = redactPii(s)
+            // logcat is opt-in (Settings → Strap → "Debug logging"); default OFF so normal users don't
+            // emit the strap log to the system log. The in-app ring buffer below always records.
+            if (debugLogcat) Log.d(TAG, safe)
+            // Mirror into the in-app ring buffer (format under the lock — SimpleDateFormat isn't
+            // thread-safe and log() is called from both the GATT binder thread and the main looper).
+            synchronized(logBuffer) {
+                logBuffer.addLast("${logTimeFmt.format(System.currentTimeMillis())}  $safe")
+                while (logBuffer.size > LOG_BUFFER_MAX) logBuffer.removeFirst()
+            }
+        } catch (t: Throwable) {
+            // Last resort: note that a log line failed, without risking another throw. Never rethrow.
+            runCatching {
+                synchronized(logBuffer) {
+                    logBuffer.addLast("[log error: ${t.javaClass.simpleName}]")
+                    while (logBuffer.size > LOG_BUFFER_MAX) logBuffer.removeFirst()
+                }
+            }
         }
     }
 
@@ -3613,7 +3637,13 @@ class WhoopBleClient(
 private val PII_MAC_RE = Regex("([0-9A-Fa-f]{2}):[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:([0-9A-Fa-f]{2})")
 private val PII_WHOOP_SERIAL_RE = Regex("WHOOP (\\d[0-9A-Za-z]{5,})")
 
-/** Mask MAC addresses and WHOOP serials in a strap-log line before it's shown/exported. Pure + total. */
-internal fun redactStrapLogPii(s: String): String = s
-    .replace(PII_MAC_RE, "$1:••:••:••:••:$2")
-    .replace(PII_WHOOP_SERIAL_RE, "WHOOP <serial>")
+/** Mask MAC addresses and WHOOP serials in a strap-log line before it's shown/exported.
+ *  TOTAL — never throws: a redaction failure returns a safe placeholder rather than leaking the raw
+ *  line or crashing the caller (#453). The MAC regex captures exactly two groups (first + last octet),
+ *  so the replacement references $1/$2 only. */
+internal fun redactStrapLogPii(s: String): String = try {
+    s.replace(PII_MAC_RE, "$1:••:••:••:••:$2")
+        .replace(PII_WHOOP_SERIAL_RE, "WHOOP <serial>")
+} catch (t: Throwable) {
+    "[redaction error — line withheld]"
+}
