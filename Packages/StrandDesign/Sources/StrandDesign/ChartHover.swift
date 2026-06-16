@@ -177,6 +177,24 @@ struct HighlightDot: View {
     }
 }
 
+// MARK: - "Now" end-cap
+
+/// The glowing "now" marker pinned to a trend line's latest point: a soft tinted halo, a brighter
+/// mid-ring, and a white core — the Bevel idiom. Positioned by `TrendChart` inside its own plot
+/// coordinate space so it sits exactly on the curve (#458).
+struct NowCapDot: View {
+    var color: Color
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color.opacity(0.30)).frame(width: 18, height: 18)
+            Circle().fill(color.opacity(0.65)).frame(width: 11, height: 11)
+            Circle().fill(Color.white).frame(width: 5, height: 5)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - Tooltip overlay container
 
 /// Wraps a tooltip so its measured size feeds back into placement. Fades in

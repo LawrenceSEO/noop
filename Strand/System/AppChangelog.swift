@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "4.2.5"
+    static let currentVersion = "4.2.6"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "4.2.6",
+            title: "\"Now\" dot sits on the trend line",
+            date: "June 2026",
+            items: [
+                "**Fixed the glowing \"now\" dot on the Trends graphs floating below or left of the line** instead of on the latest point. It's now positioned by the chart's own coordinate system — the same one the line uses — so it lands exactly on the curve. Thanks @subscriptiondestroyer (#458).",
+            ]),
         Release(
             version: "4.2.5",
             title: "Trends report explains its scores",

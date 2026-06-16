@@ -296,7 +296,7 @@ struct TrendsView: View {
                 if pts.count >= 2 {
                     glowChart(points: pts,
                               gradient: StrandPalette.recoveryGradient,
-                              // Lift the ceiling ~6% so a near-100 peak and the NowEndCap halo
+                              // Lift the ceiling ~6% so a near-100 peak and the now-cap halo
                               // clear the top gridline, matching the padded small multiples.
                               valueRange: 0...106,
                               tip: StrandPalette.chargeBright,
@@ -486,13 +486,13 @@ struct TrendsView: View {
                 .blur(radius: 6)
                 .opacity(0.5)
                 .allowsHitTesting(false)
-            // The crisp, interactive line + area — the one VoiceOver reads, named by series.
+            // The crisp, interactive line + area — the one VoiceOver reads, named by series. The "now"
+            // end-cap is drawn INSIDE this chart (nowCapColor) so it's mapped by the chart's own scales
+            // and lands on the line — the previous sibling overlay guessed the plot insets and floated
+            // the dot left/below the curve (#458).
             TrendChart(points: pts, gradient: gradient, valueRange: valueRange,
                        showsArea: true, height: NoopMetrics.chartHeight, valueFormat: valueFormat,
-                       accessibilityLabel: accessibilityLabel)
-            // Bright end-cap at the most-recent sample — "now".
-            NowEndCap(value: pts.last?.value, valueRange: valueRange, tip: tip)
-                .allowsHitTesting(false)
+                       accessibilityLabel: accessibilityLabel, nowCapColor: tip)
         }
     }
 
@@ -502,44 +502,6 @@ struct TrendsView: View {
             .foregroundStyle(StrandPalette.textTertiary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .background(StrandPalette.surfaceInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-// MARK: - Now end-cap
-
-/// A glowing dot pinned to the latest point of a `TrendChart` — a halo + white core in the domain
-/// tip colour, the Bevel "now" marker. Pinned to the trailing edge (the most-recent x) and mapped
-/// vertically by the value within the chart's value range. Decorative + accessibility-hidden; the
-/// real read-out is the card's trailing value and the line's own hover tooltip.
-private struct NowEndCap: View {
-    let value: Double?
-    let valueRange: ClosedRange<Double>
-    let tip: Color
-
-    private func unit(_ v: Double) -> Double {
-        let lo = valueRange.lowerBound, hi = valueRange.upperBound
-        guard hi > lo else { return 0.5 }
-        return min(max((v - lo) / (hi - lo), 0), 1)
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            if let v = value {
-                // TrendChart pads the plot ~6.5pt top/bottom; inset the mapping so the cap lands on
-                // the curve rather than the frame edge. The latest sample is always at the right edge.
-                let inset: CGFloat = 7
-                let h = max(geo.size.height - inset * 2, 1)
-                let y = inset + (1 - CGFloat(unit(v))) * h
-                let x = geo.size.width - inset
-                ZStack {
-                    Circle().fill(tip.opacity(0.30)).frame(width: 18, height: 18)
-                    Circle().fill(tip.opacity(0.65)).frame(width: 11, height: 11)
-                    Circle().fill(Color.white).frame(width: 5, height: 5)
-                }
-                .position(x: x, y: y)
-            }
-        }
-        .accessibilityHidden(true)
     }
 }
 

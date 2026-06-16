@@ -44,6 +44,10 @@ public struct TrendChart: View {
     /// Optional human-readable series name for VoiceOver (e.g. "HRV trend"). When nil the
     /// element falls back to a generic "Trend" label so it's never unlabeled.
     public var accessibilityLabel: String?
+    /// When set, draws a glowing "now" end-cap on the most-recent point — IN the chart's own
+    /// coordinate space (via the overlay proxy), so it sits exactly on the line. nil = no cap.
+    /// (#458: an earlier sibling-overlay cap guessed the plot insets and floated off the line.)
+    public var nowCapColor: Color?
 
     /// Mean of all point values, computed once in `init` so the area fill's gradient
     /// stop doesn't run an O(n) reduce for every mark on every render.
@@ -61,7 +65,8 @@ public struct TrendChart: View {
         showsHover: Bool = true,
         valueFormat: @escaping (Double) -> String = { String(Int($0.rounded())) },
         dateFormat: @escaping (Date) -> String = { TrendChart.defaultDateString($0) },
-        accessibilityLabel: String? = nil
+        accessibilityLabel: String? = nil,
+        nowCapColor: Color? = nil
     ) {
         let sorted = points.sorted { $0.date < $1.date }
         self.points = sorted
@@ -73,6 +78,7 @@ public struct TrendChart: View {
         self.valueFormat = valueFormat
         self.dateFormat = dateFormat
         self.accessibilityLabel = accessibilityLabel
+        self.nowCapColor = nowCapColor
         let avg = sorted.isEmpty
             ? valueRange.lowerBound
             : sorted.map(\.value).reduce(0, +) / Double(sorted.count)
@@ -218,6 +224,17 @@ public struct TrendChart: View {
                                 accent: color
                             )
                         )
+                    }
+
+                    // "Now" end-cap on the latest point (#458). Positioned with the SAME proxy mapping the
+                    // line uses (position(forX:/forY:) + plot origin), so it lands exactly on the curve —
+                    // not via a sibling overlay guessing the axis insets, which floated it left/below.
+                    if let capColor = nowCapColor, let last = points.last,
+                       let px = proxy.position(forX: last.date),
+                       let py = proxy.position(forY: last.value) {
+                        NowCapDot(color: capColor)
+                            .position(x: px + plot.minX, y: py + plot.minY)
+                            .allowsHitTesting(false)
                     }
                 }
                 .animation(StrandMotion.fade, value: hoverX)
