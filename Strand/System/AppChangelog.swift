@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "4.2.6"
+    static let currentVersion = "4.2.7"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "4.2.7",
+            title: "Start a workout from the Workouts screen",
+            date: "June 2026",
+            items: [
+                "**You can now start a live workout straight from the Workouts screen** — via the centre \"+\" quick action or the Workouts tab — instead of only from the Live screen. A Start Workout button begins the session and opens the in-exercise view; if one's already running it becomes \"View active workout.\" Thanks @subscriptiondestroyer (#459).",
+            ]),
         Release(
             version: "4.2.6",
             title: "\"Now\" dot sits on the trend line",

@@ -17,6 +17,10 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 4.2.7 — Start a workout from the Workouts screen (iPhone & Mac)
+
+- You can now **start a live workout straight from the Workouts screen** (reached from the centre "+" quick-action or the Workouts tab), not only from the Live screen. A prominent **Start Workout** button begins the session and opens the in-exercise view right away; if one's already running it becomes **View active workout**. This is where people instinctively look for it. Thanks @subscriptiondestroyer (#459). *(iPhone & Mac catching up — Android already had a start control on its Workouts screen.)*
+
 ## 4.2.6 — "Now" dot sits on the trend line (iPhone & Mac)
 
 - Fixed the glowing "now" dot on the Trends graphs (Charge, HRV, Resting HR, Effort) floating *below* or *to the left* of the line instead of landing on the latest point. The dot was positioned by guessing the chart's plot margins; it's now placed using the chart's own coordinate system — the same mapping the line uses — so it sits exactly on the curve's final point. Thanks @subscriptiondestroyer (#458). *(iPhone & Mac; Android's trend charts position the dot correctly already.)*

@@ -19,6 +19,11 @@ import Foundation
 
 struct WorkoutsView: View {
     @EnvironmentObject var repo: Repository
+    /// #459: "Start Workout" used to live ONLY on the Live screen, so a user reaching Workouts (via the
+    /// Quick-action FAB or the tab) had no way to begin one from the obvious place. Injected here so the
+    /// header/empty-state can start a live session and present the in-exercise view directly.
+    @EnvironmentObject var model: AppModel
+    @State private var showLiveWorkout = false
 
     // Imperial/Metric display preference (D#103). Workout distances are stored in metres; the toggle
     // re-labels them to miles/yards. Display-only — nothing on disk changes.
@@ -80,7 +85,9 @@ struct WorkoutsView: View {
                     ComingSoon(what: loaded
                         ? "No workouts yet. They come from your WHOOP and Apple Health history. Import in Data Sources to bring them in — or add one you tracked elsewhere."
                         : "Loading your sessions…")
-                    if loaded { addWorkoutButton }
+                    if loaded {
+                        HStack(spacing: 10) { startLiveWorkoutButton; addWorkoutButton }
+                    }
                 }
             } else {
                 // Compute the windowed rows and per-sport groups ONCE per body
@@ -94,6 +101,7 @@ struct WorkoutsView: View {
                 let groups = sportGroups(from: windowRows)
                 let zonesSummary = WorkoutZones.summary(from: windowRows)
 
+                HStack { startLiveWorkoutButton; Spacer() }
                 rangeBar(rows: windowRows, effectiveRange: resolved)
                 if let postLogNote { postLogBanner(postLogNote) }
                 effortHero(rows: windowRows, effectiveRange: resolved, groups: groups)
@@ -147,6 +155,11 @@ struct WorkoutsView: View {
             #else
             .frame(minWidth: 560, minHeight: 640)
             #endif
+        }
+        // #459: the in-exercise view, presented when Start Workout is tapped here (same screen LiveView
+        // shows). activeWorkout is global on AppModel, so ending it from either surface stays in sync.
+        .sheet(isPresented: $showLiveWorkout) {
+            LiveWorkoutView(onClose: { showLiveWorkout = false })
         }
     }
 
@@ -274,6 +287,23 @@ struct WorkoutsView: View {
         .buttonStyle(.bordered)
         .tint(StrandPalette.accent)
         .accessibilityLabel("Add a workout")
+    }
+
+    /// #459: begin (or jump back into) a live, manually-tracked workout straight from Workouts — the
+    /// place people instinctively look — instead of only from the Live screen. Starts the session and
+    /// presents the in-exercise view directly (no cross-view auto-present race with LiveView's sheet).
+    private var startLiveWorkoutButton: some View {
+        Button {
+            if model.activeWorkout == nil { model.startWorkout() }
+            showLiveWorkout = true
+        } label: {
+            Label(model.activeWorkout == nil ? "Start Workout" : "View active workout",
+                  systemImage: model.activeWorkout == nil ? "figure.run" : "timer")
+                .font(StrandFont.subhead)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(StrandPalette.accent)
+        .accessibilityLabel(model.activeWorkout == nil ? "Start a workout" : "View the active workout")
     }
 
     /// The latest session start (anchors every window — windows are relative to the
